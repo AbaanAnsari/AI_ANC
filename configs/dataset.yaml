@@ -1,0 +1,44 @@
+# Phase 0 dataset configuration
+dataset:
+  raw_root: "D:/SIH/AI_ANC/data"
+  expected_audio_extension: ".wav"
+  clean_dir: "clean"
+  noise_dir: "noise"
+  noise_classes:
+    stationary:
+      - fan
+      - gearbox
+      - pump
+    non-stationary:
+      - drone
+      - helicopter
+      - vehicle
+      - siren
+      - wind
+    impulsive: []
+
+internal_audio:
+  sample_rate_hz: 16000
+  channels: 1
+  dtype: "float32"
+  normalization: "[-1, 1]"
+  resampling: "polyphase"
+  downmix: "mean"
+  source_files_are_immutable: true
+
+splitting:
+  strategy: "recording_level"
+  train_fraction: 0.70
+  validation_fraction: 0.15
+  test_fraction: 0.15
+  seed: 20260925
+  stratify_noise_by_class: true
+  leakage_rule: "No source recording may appear in more than one split."
+
+manifest:
+  format: "jsonl"
+  master: "data/manifests/dataset_manifest.jsonl"
+  train: "data/manifests/train_manifest.jsonl"
+  validation: "data/manifests/val_manifest.jsonl"
+  test: "data/manifests/test_manifest.jsonl"
+  path_style: "relative_to_raw_root"

@@ -1,0 +1,36 @@
+# Locked DSP contract
+audio:
+  sample_rate_hz: 16000
+  channels: 1
+  dtype: "float32"
+
+preprocessing:
+  dc_removal: true
+  bandpass_filter: true
+  framing: true
+
+synchronization:
+  method: "GCC-PHAT"
+  purpose:
+    - relative_delay_estimation
+    - microphone_synchronization
+
+kalman:
+  enabled: true
+  tracks:
+    - signal_state
+    - noise_variation
+    - relative_delay
+
+conditional_noise_processing:
+  stationary: "NLMS_stable_parameters"
+  non_stationary: "NLMS_adaptive_parameters"
+  impulsive: "transient_aware_AI_plus_conservative_NLMS"
+
+speech_protection:
+  vad: true
+  speech_mask: true
+  impulse_handling: true
+
+safety:
+  limiter: true

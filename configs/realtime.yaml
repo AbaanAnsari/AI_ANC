@@ -1,0 +1,23 @@
+# Desktop real-time simulation contract
+audio_input:
+  source: "OS_audio_device"
+  microphone_channels: 2
+  primary_channel: 1
+  reference_channel: 2
+  sample_rate_hz: 16000
+
+audio_output:
+  source: "user_selected_OS_audio_device"
+  bluetooth_supported: true
+
+streaming:
+  mode: "continuous"
+  record_then_play: false
+  frame_based: true
+
+metrics:
+  rolling_snr: true
+  rolling_stoi: true
+  rolling_pesq: true
+  algorithmic_latency_ms: true
+  audio_device_latency_separate: true

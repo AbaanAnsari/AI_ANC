@@ -1,0 +1,18 @@
+# Locked model constraints for the project
+model:
+  architecture: "CNN + lightweight GRU"
+  primary_task: "supervised_speech_enhancement"
+  supporting_task: "supervised_3_class_noise_classification"
+  noise_classes:
+    - stationary
+    - non-stationary
+    - impulsive
+
+constraints:
+  max_trainable_parameters: 100000
+  parameter_budget_is_hard_constraint: true
+  deployment_target: "STM32H753ZI"
+
+planned_input:
+  representation: "complex_STFT"
+  phase_preservation: true

@@ -1,0 +1,25 @@
+# Phase 0 / Phase 1 training data contract
+audio:
+  sample_rate_hz: 16000
+  channels: 1
+  dtype: "float32"
+
+segments:
+  duration_seconds: 1.0
+  samples: 16000
+  crop_mode: "random"
+
+snr_db:
+  values: [-5, 0, 5, 10, 15, 20]
+
+stft:
+  n_fft: 512
+  hop_length: 256
+  win_length: 512
+  window: "hann"
+
+split:
+  train: 0.70
+  validation: 0.15
+  test: 0.15
+  level: "recording"

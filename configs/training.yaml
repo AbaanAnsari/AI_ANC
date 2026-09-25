@@ -1,25 +1,42 @@
-# Phase 0 / Phase 1 training data contract
-audio:
-  sample_rate_hz: 16000
-  channels: 1
-  dtype: "float32"
+# ============================================================
+# Phase 1 Step 13 — Authoritative Training Configuration
+# Single-source of truth for all training defaults.
+# ============================================================
 
-segments:
-  duration_seconds: 1.0
-  samples: 16000
-  crop_mode: "random"
+# --- Core Training Parameters ---
+batch_size: 16
+epochs: 30
+learning_rate: 0.001
+weight_decay: 0.0001
+gradient_clip_norm: 5.0
+seed: 123
+num_workers: 0
+validation_frequency: 1
+log_frequency: 10
+mixed_precision: false
 
-snr_db:
-  values: [-5, 0, 5, 10, 15, 20]
+# --- Optimizer ---
+optimizer: AdamW
 
-stft:
-  n_fft: 512
-  hop_length: 256
-  win_length: 512
-  window: "hann"
+# --- Scheduler ---
+scheduler:
+  type: ReduceLROnPlateau
+  mode: min
+  factor: 0.5
+  patience: 3
+  min_lr: 1.0e-6
 
-split:
-  train: 0.70
-  validation: 0.15
-  test: 0.15
-  level: "recording"
+# --- Loss Weights ---
+loss:
+  enhancement_weight: 1.0
+  classification_weight: 0.10
+  enhancement_l1_weight: 0.7
+  enhancement_l2_weight: 0.3
+
+# --- Checkpoint ---
+checkpoint:
+  checkpoint_dir: models/checkpoints
+  save_best_only: true
+  monitor: val_total_loss
+  mode: min
+  save_last: true

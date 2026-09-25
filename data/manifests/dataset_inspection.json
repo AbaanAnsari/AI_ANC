@@ -1,0 +1,46 @@
+{
+  "dataset_root": "D:\\SIH\\SIH_2026\\data",
+  "total_wav_files": 3820,
+  "successfully_parsed_wav_files": 3820,
+  "total_duration_seconds": 29040.921807,
+  "categories": {
+    "clean": 1345,
+    "impulsive": 429,
+    "non-stationary": 1135,
+    "stationary": 911
+  },
+  "category_durations_seconds": {
+    "clean": 11912.550187,
+    "impulsive": 1778.0,
+    "non-stationary": 6240.371619,
+    "stationary": 9110.0
+  },
+  "subcategories": {
+    "non-stationary/drone": 220,
+    "non-stationary/helicopter": 353,
+    "non-stationary/siren": 182,
+    "non-stationary/vehicle": 314,
+    "non-stationary/wind": 66,
+    "stationary/fan": 454,
+    "stationary/gearbox": 257,
+    "stationary/pump": 200
+  },
+  "sample_rates": {
+    "16000": 2541,
+    "44100": 720,
+    "48000": 559
+  },
+  "channels": {
+    "1": 2542,
+    "2": 1278
+  },
+  "invalid_audio_files": [],
+  "unexpected_audio_files": [],
+  "phase_0_contract": {
+    "raw_dataset_is_read_only": true,
+    "internal_sample_rate_hz": 16000,
+    "internal_channels": 1,
+    "internal_dtype": "float32",
+    "split_level": "recording"
+  }
+}

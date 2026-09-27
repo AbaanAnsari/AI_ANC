@@ -1,0 +1,62 @@
+{
+  "system_info": {
+    "os": "Windows-10-10.0.26200-SP0",
+    "cpu": "Intel64 Family 6 Model 151 Stepping 2, GenuineIntel",
+    "physical_cores": 12,
+    "logical_cores": 16,
+    "ram_gb": 15.71,
+    "python_version": "3.11.9",
+    "pytorch_version": "2.14.0+cpu",
+    "cuda_available": false,
+    "execution_mode": "CPU",
+    "audio_backend": "sounddevice 0.5.6 / PortAudio PortAudio V19.7.0-devel, revision unknown",
+    "sample_rate": 16000,
+    "block_size": 256,
+    "checkpoint": "D:\\SIH\\AI_ANC\\experiments\\phase2_step6_targeted_crm_full\\best_checkpoint.pt",
+    "model_parameters": 70789,
+    "input_device_id": 1,
+    "input_device_name": "Microphone Array (Realtek(R) Au",
+    "input_hostapi": "MME",
+    "input_channels": 2,
+    "output_device_id": 3,
+    "output_device_name": "Speakers (Realtek(R) Audio)",
+    "output_hostapi": "MME",
+    "output_channels": 2,
+    "primary_channel": 0,
+    "ref_channel": 1,
+    "is_dual_mic": true
+  },
+  "test_parameters": {
+    "target_duration_s": 60.0,
+    "actual_wall_time_s": 60.82,
+    "sample_rate": 16000,
+    "block_size": 256
+  },
+  "performance_metrics": {
+    "total_audio_duration_processed_s": 59.79,
+    "total_processing_time_s": 34.81,
+    "real_time_factor": 0.582,
+    "real_time_capable": true,
+    "mean_processing_time_ms": 4.58,
+    "p95_processing_time_ms": 6.17,
+    "p99_processing_time_ms": 9.82,
+    "max_processing_time_ms": 10.19,
+    "audio_hop_duration_ms": 8.0,
+    "mean_cpu_percent": 74.96,
+    "max_cpu_percent": 81.5
+  },
+  "buffer_health": {
+    "input_overflows": 0,
+    "output_underflows": 20,
+    "dropped_blocks": 0,
+    "queue_depth_samples_at_exit": 256
+  },
+  "signal_stats": {
+    "input_rms_m1": 1.5495374100282788e-05,
+    "input_rms_m2": 1.4016092791280244e-05,
+    "output_rms": 8.286144293379039e-06,
+    "last_noise_class": "Stationary",
+    "confidence": 0.42430558800697327,
+    "clipping_events": 0
+  }
+}

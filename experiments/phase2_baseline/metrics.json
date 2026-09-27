@@ -1,0 +1,64 @@
+{
+  "experiment_name": "phase2_baseline",
+  "environment": {
+    "python_version": "3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (AMD64)]",
+    "pytorch_version": "2.14.0+cpu",
+    "operating_system": "Windows-10-10.0.26200-SP0",
+    "device": "cpu",
+    "cuda_available": false,
+    "cpu_count": 16
+  },
+  "training_duration_seconds": 1076.213051,
+  "completed_epochs": 30,
+  "nan_inf_occurred": false,
+  "stop_reason": null,
+  "best_val_loss_epoch": 28,
+  "best_val_loss": 0.11048549528305347,
+  "best_val_snr_imp_epoch": 29,
+  "best_val_snr_imp": -7.600978248010427,
+  "final_test_results": {
+    "checkpoint_evaluated": "best_checkpoint.pt",
+    "best_val_loss_epoch": 28,
+    "best_val_loss": 0.11048549528305347,
+    "total_loss": 0.11044187442614482,
+    "enhancement_loss": 0.0005297541345218912,
+    "classification_loss": 1.0991211946193988,
+    "input_snr_db": 7.599010222729032,
+    "enhanced_snr_db": -0.005524855544388919,
+    "snr_improvement_db": -7.604535078273419,
+    "stoi_available": true,
+    "noisy_stoi": 0.7788774833256613,
+    "enhanced_stoi": 0.4307034668744142,
+    "pesq_available": true,
+    "noisy_pesq": 1.4911317310141559,
+    "enhanced_pesq": 1.0442316520093666,
+    "classification_accuracy": 0.3415841584158416,
+    "per_class_accuracy": {
+      "0": 0.0,
+      "1": 0.0,
+      "2": 1.0
+    },
+    "confusion_matrix": [
+      [
+        0,
+        0,
+        64
+      ],
+      [
+        0,
+        0,
+        69
+      ],
+      [
+        0,
+        0,
+        69
+      ]
+    ],
+    "class_counts": {
+      "0": 64,
+      "1": 69,
+      "2": 69
+    }
+  }
+}

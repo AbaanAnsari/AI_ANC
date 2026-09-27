@@ -1,0 +1,72 @@
+{
+  "experiment_name": "phase2_step5_targeted_crm",
+  "environment": {
+    "python_version": "3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (AMD64)]",
+    "pytorch_version": "2.14.0+cu126",
+    "operating_system": "Windows-10-10.0.26200-SP0",
+    "device": "cpu",
+    "cuda_available": false,
+    "cpu_count": 16
+  },
+  "training_duration_seconds": 106.8326528,
+  "completed_epochs": 5,
+  "nan_inf_occurred": false,
+  "stop_reason": null,
+  "trainable_params": 70789,
+  "best_val_loss_epoch": 2,
+  "best_val_loss": 0.2080377684189723,
+  "best_val_snr_imp_epoch": 4,
+  "best_val_snr_imp": -4.541254328793147,
+  "final_test_results": {
+    "checkpoint_evaluated": "best_checkpoint.pt",
+    "best_val_loss_epoch": 2,
+    "best_val_loss": 0.2080377684189723,
+    "total_loss": 0.20830930196321928,
+    "enhancement_loss": 0.0976210838327041,
+    "mask_loss": 0.13607873079868463,
+    "reconstruction_loss": 0.0006347586156782479,
+    "energy_loss": 0.31503352293601405,
+    "classification_loss": 1.1068821778664222,
+    "input_snr_db": 7.599010222729032,
+    "enhanced_snr_db": 1.5303842358442594,
+    "snr_improvement_db": -6.06862598688477,
+    "stoi_available": false,
+    "noisy_stoi": null,
+    "enhanced_stoi": null,
+    "pesq_available": false,
+    "noisy_pesq": null,
+    "enhanced_pesq": null,
+    "classification_accuracy": 0.26732673267326734,
+    "per_class_accuracy": {
+      "0": 0.46875,
+      "1": 0.0,
+      "2": 0.34782608695652173
+    },
+    "confusion_matrix": [
+      [
+        30,
+        0,
+        34
+      ],
+      [
+        42,
+        0,
+        27
+      ],
+      [
+        45,
+        0,
+        24
+      ]
+    ],
+    "class_counts": {
+      "0": 64,
+      "1": 69,
+      "2": 69
+    },
+    "sample_enhanced_clean_rms_ratio": 0.37241716264121133,
+    "sample_enhanced_rms": 0.03020455688238144,
+    "sample_clean_rms": 0.0811040848493576,
+    "sample_noisy_rms": 0.08487596362829208
+  }
+}

@@ -1,0 +1,27 @@
+batch_size: 16
+checkpoint:
+  dir: D:\SIH\AI_ANC\experiments\phase2_step4_crm
+  mode: min
+  monitor: val_total_loss
+epochs: 30
+gradient_clip_norm: 5.0
+learning_rate: 0.001
+loss:
+  classification_weight: 0.1
+  energy_preservation_weight: 0.1
+  enhancement_l1_weight: 0.7
+  enhancement_l2_weight: 0.3
+  enhancement_weight: 1.0
+mixed_precision: false
+model: LightweightCNNGRUMaskModel
+num_workers: 0
+optimizer: AdamW
+scheduler:
+  factor: 0.5
+  min_lr: 1.0e-06
+  mode: min
+  patience: 3
+  type: ReduceLROnPlateau
+seed: 123
+validation_frequency: 1
+weight_decay: 0.0001

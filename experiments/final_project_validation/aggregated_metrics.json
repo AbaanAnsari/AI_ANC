@@ -1,0 +1,100 @@
+{
+  "total_samples": 202,
+  "ok_samples": 202,
+  "error_samples": 0,
+  "snr_noisy": {
+    "mean": 8.8861,
+    "median": 10.0,
+    "std": 8.4357,
+    "min": -5.0,
+    "max": 20.0,
+    "count": 202
+  },
+  "snr_enhanced": {
+    "mean": 7.9611,
+    "median": 8.4203,
+    "std": 4.5622,
+    "min": -4.1937,
+    "max": 15.9566,
+    "count": 202
+  },
+  "snr_improvement": {
+    "mean": -0.9251,
+    "median": -0.096,
+    "std": 5.3746,
+    "min": -18.1235,
+    "max": 9.4696,
+    "count": 202
+  },
+  "stoi_noisy": {
+    "mean": 0.8128,
+    "median": 0.882,
+    "std": 0.2026,
+    "min": -0.0555,
+    "max": 0.9991,
+    "count": 202
+  },
+  "stoi_enhanced": {
+    "mean": 0.7936,
+    "median": 0.8606,
+    "std": 0.1987,
+    "min": -0.0419,
+    "max": 0.9879,
+    "count": 202
+  },
+  "stoi_improvement": {
+    "mean": -0.0192,
+    "median": -0.0158,
+    "std": 0.056,
+    "min": -0.2604,
+    "max": 0.1856,
+    "count": 202
+  },
+  "pesq_noisy": {
+    "mean": 1.5116,
+    "median": 1.2977,
+    "std": 0.5461,
+    "min": 1.0252,
+    "max": 3.5324,
+    "count": 201
+  },
+  "pesq_enhanced": {
+    "mean": 1.7745,
+    "median": 1.5477,
+    "std": 0.6635,
+    "min": 1.0329,
+    "max": 3.6422,
+    "count": 201
+  },
+  "pesq_improvement": {
+    "mean": 0.2629,
+    "median": 0.2189,
+    "std": 0.412,
+    "min": -2.1004,
+    "max": 1.7748,
+    "count": 201
+  },
+  "pesq_noisy_failure_count": 1,
+  "pesq_enhanced_failure_count": 1,
+  "classification_accuracy": 0.7624,
+  "classification_correct": 154,
+  "classification_total": 202,
+  "per_class_accuracy": {
+    "stationary": 0.6974,
+    "non-stationary": 0.7333,
+    "impulsive": 0.8636
+  },
+  "per_class_total": {
+    "stationary": 76,
+    "non-stationary": 60,
+    "impulsive": 66
+  },
+  "stoi_extended": false,
+  "stoi_sample_rate": 16000,
+  "pesq_mode": "wb",
+  "pesq_sample_rate": 16000,
+  "pesq_resampling": "none (native 16 kHz)",
+  "model_epoch": 29,
+  "checkpoint_path": "D:\\SIH\\AI_ANC\\experiments\\phase2_step6_targeted_crm_full\\best_checkpoint.pt",
+  "evaluation_duration_s": 23.89
+}

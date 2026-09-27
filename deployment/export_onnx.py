@@ -1,20 +1,27 @@
 """
-deployment/export_onnx.py — Phase 1 Step 17 ONNX Export
-=========================================================
-Exports the LightweightCNNTGRUModel to ONNX format for future inference.
+deployment/export_onnx.py — ONNX Export (Updated for Mask Model)
+=================================================================
+Exports the LightweightCNNGRUMaskModel to ONNX format.
+
+This file was updated from the Phase 1 Step 17 baseline to target the
+current best model: LightweightCNNGRUMaskModel (CRM, 70,789 params).
 
 Design rules:
-  - Loads from checkpoint; never uses random weights.
+  - Loads from best_checkpoint.pt (Step6 validated).
   - Model architecture is NOT modified.
   - No quantization, no pruning.
   - No STM32-specific optimization.
-  - Exports to: deployment/exports/cnn_gru.onnx
+  - Exports to: deployment/exports/cnn_gru_mask.onnx
   - Does NOT overwrite the PyTorch checkpoint.
 
 ONNX input shape:  (B, 2, 257, T)  — dynamic batch and T
 ONNX outputs:
     enhanced_stft          (B, 2, 257, T)
     classification_logits  (B, 3)
+    mask                   (B, 2, 257, T)
+
+NOTE: The old LightweightCNNTGRUModel export (cnn_gru.onnx) is preserved
+as a historical artifact. This script now exports cnn_gru_mask.onnx.
 """
 from __future__ import annotations
 
@@ -43,8 +50,11 @@ except ImportError:
     HAS_ORT = False
 
 EXPORT_DIR = PROJECT_ROOT / "deployment" / "exports"
-BEST_CHECKPOINT = PROJECT_ROOT / "models" / "checkpoints" / "best_checkpoint.pt"
-ONNX_PATH = EXPORT_DIR / "cnn_gru.onnx"
+# Updated: use Step6 checkpoint (best validated)
+BEST_CHECKPOINT = (
+    PROJECT_ROOT / "experiments" / "phase2_step6_targeted_crm_full" / "best_checkpoint.pt"
+)
+ONNX_PATH = EXPORT_DIR / "cnn_gru_mask.onnx"  # Updated filename for mask model
 
 # Fixed T for export (used only if dynamic axes fail; dynamic is preferred)
 FIXED_INFERENCE_T = 126
@@ -53,7 +63,7 @@ EXPECTED_PARAM_COUNT = 70_789
 
 def export_to_onnx(
     checkpoint_path: str | Path = BEST_CHECKPOINT,
-    output_path: str | Path = ONNX_PATH,
+    output_path: str | Path = ONNX_PATH,  # Now defaults to cnn_gru_mask.onnx
     opset_version: int = 14,
     fixed_T: int = FIXED_INFERENCE_T,
 ) -> Path:
@@ -90,7 +100,8 @@ def export_to_onnx(
             "ONNX export requires 'onnx'. Install with: pip install onnx"
         )
 
-    from src.models.cnn_gru import LightweightCNNTGRUModel
+    # Updated: use mask model (LightweightCNNGRUMaskModel)
+    from src.models.cnn_gru_mask import LightweightCNNGRUMaskModel
 
     checkpoint_path = Path(checkpoint_path)
     output_path = Path(output_path)
@@ -103,7 +114,7 @@ def export_to_onnx(
     if "model_state_dict" not in checkpoint:
         raise RuntimeError("Checkpoint is missing 'model_state_dict'.")
 
-    model = LightweightCNNTGRUModel()
+    model = LightweightCNNGRUMaskModel()
     model.load_state_dict(checkpoint["model_state_dict"])
 
     # Verify parameter count — architecture must be unchanged
@@ -127,10 +138,12 @@ def export_to_onnx(
     dummy_input = torch.zeros(1, 2, 257, fixed_T, dtype=torch.float32)
 
     # Dynamic axes: batch and time
+    # Mask model has 3 outputs: enhanced_stft, classification_logits, mask
     dynamic_axes = {
         "noisy_features": {0: "batch_size", 3: "time_frames"},
         "enhanced_stft": {0: "batch_size", 3: "time_frames"},
         "classification_logits": {0: "batch_size"},
+        "mask": {0: "batch_size", 3: "time_frames"},
     }
 
     torch.onnx.export(
@@ -139,7 +152,7 @@ def export_to_onnx(
         str(output_path),
         opset_version=opset_version,
         input_names=["noisy_features"],
-        output_names=["enhanced_stft", "classification_logits"],
+        output_names=["enhanced_stft", "classification_logits", "mask"],
         dynamic_axes=dynamic_axes,
         do_constant_folding=True,
         dynamo=False,  # use stable legacy TorchScript-based exporter
@@ -269,14 +282,14 @@ def compare_pytorch_onnx(
         atol                  : float
         rtol                  : float
     """
-    from src.models.cnn_gru import LightweightCNNTGRUModel
+    from src.models.cnn_gru_mask import LightweightCNNGRUMaskModel
 
     checkpoint_path = Path(checkpoint_path)
     onnx_path = Path(onnx_path)
 
     # Load PyTorch model
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    model = LightweightCNNTGRUModel()
+    model = LightweightCNNGRUMaskModel()
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
 
@@ -285,7 +298,7 @@ def compare_pytorch_onnx(
     dummy = torch.randn(1, 2, 257, fixed_T, dtype=torch.float32)
 
     with torch.no_grad():
-        pt_enhanced, pt_logits = model(dummy)
+        pt_enhanced, pt_logits, pt_mask = model(dummy)
 
     ort_enhanced, ort_logits = run_onnx_inference(onnx_path, dummy)
 

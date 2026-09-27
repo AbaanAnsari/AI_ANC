@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AETHEL123 — AI Real-Time Audio Console</title>
+  <meta name="description" content="Mission-critical real-time dual-microphone AI noise cancellation console with hardware I/O, Phase-2 Step-6 CNN+GRU model, NLMS, and safety limiter.">
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- GLOBAL HEADER -->
+  <header class="global-header">
+    <div class="header-left">
+      <div class="logo-mark">🎙️</div>
+      <div class="title-block">
+        <h1>AETHEL123</h1>
+        <div class="console-subtitle">AI REAL-TIME AUDIO CONSOLE — DUAL-MIC SPEECH ENHANCEMENT</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="status-indicator">
+        <span class="status-dot-sm green" id="dotHardware"></span>
+        <span class="status-label" id="lblHardware">HARDWARE DISCOVERED</span>
+      </div>
+      <div class="status-divider"></div>
+      <div class="status-indicator">
+        <span class="status-dot-sm offline" id="dotStream"></span>
+        <span class="status-label highlight" id="lblStream">STREAM STOPPED</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- TAB NAVIGATION BAR -->
+  <nav class="tab-bar">
+    <button class="tab-btn active" data-tab="tab-overview">OVERVIEW</button>
+    <button class="tab-btn" data-tab="tab-live-audio">LIVE AUDIO</button>
+    <button class="tab-btn" data-tab="tab-ai-dsp">AI & DSP</button>
+    <button class="tab-btn" data-tab="tab-devices">DEVICES</button>
+    <button class="tab-btn" data-tab="tab-diagnostics">DIAGNOSTICS</button>
+  </nav>
+
+  <!-- MAIN TAB CONTENT CONTAINER -->
+  <main class="tab-container">
+
+    <!-- =================================================================== -->
+    <!-- TAB 1: OVERVIEW -->
+    <!-- =================================================================== -->
+    <div class="tab-content active" id="tab-overview">
+      
+      <!-- SYSTEM STATUS BANNER -->
+      <section class="section-group">
+        <div class="section-header">SYSTEM STATUS</div>
+        <div class="status-cards-grid">
+          <div class="status-panel">
+            <div class="status-panel-title">INPUT DEVICE</div>
+            <div class="status-panel-value" id="ovInputDev">Scanning...</div>
+            <div class="status-tag active" id="tagInputStatus">● ACTIVE</div>
+          </div>
+          <div class="status-panel">
+            <div class="status-panel-title">PROCESSING ENGINE</div>
+            <div class="status-panel-value" id="ovProcMode">AI (CNN+GRU) + NLMS + Fusion</div>
+            <div class="status-tag active" id="tagProcStatus">● READY</div>
+          </div>
+          <div class="status-panel">
+            <div class="status-panel-title">OUTPUT DEVICE</div>
+            <div class="status-panel-value" id="ovOutputDev">Scanning...</div>
+            <div class="status-tag active" id="tagOutputStatus">● ACTIVE</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- REALTIME METRICS (PRIMARY 4 ONLY) -->
+      <section class="section-group">
+        <div class="section-header">REALTIME TELEMETRY</div>
+        <div class="metrics-grid-four">
+          <div class="metric-card-clean">
+            <div class="metric-card-label">INPUT RMS</div>
+            <div class="metric-card-value cyan" id="ovM1RMS">—</div>
+            <div class="metric-card-unit">dBFS</div>
+          </div>
+          <div class="metric-card-clean">
+            <div class="metric-card-label">OUTPUT RMS</div>
+            <div class="metric-card-value purple" id="ovOutRMS">—</div>
+            <div class="metric-card-unit">dBFS</div>
+          </div>
+          <div class="metric-card-clean">
+            <div class="metric-card-label">HOP LATENCY</div>
+            <div class="metric-card-value" id="ovLatency">—</div>
+            <div class="metric-card-unit">ms / hop (budget: 8.0 ms)</div>
+          </div>
+          <div class="metric-card-clean">
+            <div class="metric-card-label">REAL-TIME FACTOR <span class="info-icon" data-tooltip="Real-time factor (RTF). Values below 1.0 indicate execution faster than the audio sampling clock.">ⓘ</span></div>
+            <div class="metric-card-value green" id="ovRTF">—</div>
+            <div class="metric-card-unit" id="ovRTFUnit">&lt; 1.0 = REAL-TIME PASS</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SIGNAL PIPELINE DIAGRAM -->
+      <section class="section-group">
+        <div class="section-header">SIGNAL PIPELINE ARCHITECTURE</div>
+        <div class="pipeline-diagram-card">
+          <div class="pipe-node input-node">
+            <div class="pipe-node-title">PRIMARY MIC M1</div>
+            <div class="pipe-node-sub">Speech + Noise</div>
+          </div>
+          <div class="pipe-arrow">┼</div>
+          <div class="pipe-node input-node">
+            <div class="pipe-node-title">REF MIC M2</div>
+            <div class="pipe-node-sub">Correlated Noise</div>
+          </div>
+          <div class="pipe-arrow">──►</div>
+          <div class="pipe-node dsp-node">
+            <div class="pipe-node-title">PREPROCESS</div>
+            <div class="pipe-node-sub">GCC-PHAT + Kalman</div>
+            <div class="pipe-status-tag">● ACTIVE</div>
+          </div>
+          <div class="pipe-arrow">──►</div>
+          <div class="pipe-node ai-node">
+            <div class="pipe-node-title">AI MODEL</div>
+            <div class="pipe-node-sub">CNN+GRU CRM Mask</div>
+            <div class="pipe-status-tag purple">● ACTIVE</div>
+          </div>
+          <div class="pipe-arrow">──►</div>
+          <div class="pipe-node dsp-node">
+            <div class="pipe-node-title">DSP ENGINE</div>
+            <div class="pipe-node-sub">NLMS + VAD Protection</div>
+            <div class="pipe-status-tag">● ACTIVE</div>
+          </div>
+          <div class="pipe-arrow">──►</div>
+          <div class="pipe-node dsp-node">
+            <div class="pipe-node-title">FUSION & LIMITER</div>
+            <div class="pipe-node-sub">Adaptive Blend</div>
+            <div class="pipe-status-tag">● ACTIVE</div>
+          </div>
+          <div class="pipe-arrow">──►</div>
+          <div class="pipe-node output-node">
+            <div class="pipe-node-title">ENHANCED OUTPUT</div>
+            <div class="pipe-node-sub">Speakers / Headphones</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ENVIRONMENT & SPEECH QUALITY SUMMARY ROW -->
+      <div class="overview-two-col">
+        <!-- Environment Summary -->
+        <section class="section-group">
+          <div class="section-header">CURRENT ENVIRONMENT</div>
+          <div class="summary-panel">
+            <div class="summary-row">
+              <span class="summary-label">Noise Classification:</span>
+              <span class="summary-val highlight" id="ovNoiseClass">Stationary</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">Classifier Confidence:</span>
+              <span class="summary-val" id="ovNoiseConf">0.0%</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">VAD Speech State <span class="info-icon" data-tooltip="Voice Activity Detection probability indicating active speech vs silence/noise.">ⓘ</span>:</span>
+              <span class="summary-val" id="ovVADState">Non-Speech</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Speech Quality Summary -->
+        <section class="section-group">
+          <div class="section-header">SPEECH QUALITY — LATEST VALIDATED OFFLINE EVALUATION</div>
+          <div class="summary-panel quality-summary-bg">
+            <div class="quality-mini-grid">
+              <div class="quality-mini-item">
+                <div class="quality-mini-label">STOI <span class="info-icon" data-tooltip="Short-Time Objective Intelligibility. Measures speech intelligibility relative to a clean reference (0.0 to 1.0).">ⓘ</span></div>
+                <div class="quality-mini-value cyan" id="ovSTOI">0.7936</div>
+                <div class="quality-mini-target">Target: &gt; 0.85</div>
+              </div>
+              <div class="quality-mini-item">
+                <div class="quality-mini-label">PESQ <span class="info-icon" data-tooltip="Perceptual Evaluation of Speech Quality (Wideband 16 kHz). Score ranges from 1.0 to 4.5.">ⓘ</span></div>
+                <div class="quality-mini-value purple" id="ovPESQ">1.7745</div>
+                <div class="quality-mini-target">Target: &gt; 2.50</div>
+              </div>
+              <div class="quality-mini-item">
+                <div class="quality-mini-label">SNR <span class="info-icon" data-tooltip="Signal-to-Noise Ratio improvement on held-out test dataset in dB.">ⓘ</span></div>
+                <div class="quality-mini-value amber" id="ovSNR">+7.96 dB</div>
+                <div class="quality-mini-target">Target: &gt; +15 dB</div>
+              </div>
+            </div>
+            <div class="quality-notice">
+              <span>Source: 202 Held-Out Test Samples (Epoch 29 Checkpoint)</span>
+              <button class="btn-text-link" id="btnLinkToAiDsp">View Detailed Evaluation →</button>
+            </div>
+          </div>
+        </section>
+      </div>
+
+    </div>
+
+    <!-- =================================================================== -->
+    <!-- TAB 2: LIVE AUDIO -->
+    <!-- =================================================================== -->
+    <div class="tab-content" id="tab-live-audio">
+      
+      <!-- CONTROLS TOOLBAR -->
+      <div class="live-controls-bar">
+        <div class="btn-group-main">
+          <button class="btn-control-start" id="btnStartStream">▶ Start Processing</button>
+          <button class="btn-control-stop" id="btnStopStream" disabled>■ Stop</button>
+          <button class="btn-control-mute" id="btnPauseStream" disabled>⏸ Mute Processing</button>
+          <button class="btn-control-passthrough" id="btnPassthrough">🔁 Output Path Test (Passthrough: OFF)</button>
+        </div>
+        <div class="gain-control-group">
+          <span class="control-label-sm">Master Output Gain:</span>
+          <input type="range" id="masterGainSlider" min="0" max="100" value="50" step="5">
+          <span class="gain-val-display" id="gainDisplay">50%</span>
+        </div>
+      </div>
+
+      <!-- WAVEFORMS SECTION -->
+      <div class="live-waveforms-grid">
+        
+        <!-- MIC 1 WAVEFORM -->
+        <div class="waveform-card-refined">
+          <div class="card-header-bar">
+            <span class="card-title-text cyan">MIC 1 — PHYSICAL PRIMARY INPUT</span>
+            <span class="card-sub-text">Speech + Acoustic Noise Pickup</span>
+          </div>
+          <div class="canvas-wrapper">
+            <canvas class="waveform-canvas" id="canvasM1"></canvas>
+            <div class="canvas-overlay-text" id="m1Waiting">WAITING FOR PHYSICAL AUDIO INPUT</div>
+          </div>
+          <div class="waveform-footer-metrics">
+            <span>RMS: <strong id="lblM1RMS" class="cyan">-96.0 dBFS</strong></span>
+            <span>Peak: <strong id="lblM1Peak">-96.0 dBFS</strong></span>
+            <span>Channel: <strong>0 (Primary)</strong></span>
+          </div>
+        </div>
+
+        <!-- MIC 2 WAVEFORM -->
+        <div class="waveform-card-refined">
+          <div class="card-header-bar">
+            <span class="card-title-text teal">MIC 2 — PHYSICAL REFERENCE INPUT</span>
+            <span class="card-sub-text">Correlated Environmental Noise</span>
+          </div>
+          <div class="canvas-wrapper">
+            <canvas class="waveform-canvas" id="canvasM2"></canvas>
+            <div class="canvas-overlay-text" id="m2Waiting">WAITING FOR PHYSICAL AUDIO INPUT</div>
+          </div>
+          <div class="waveform-footer-metrics">
+            <span>RMS: <strong id="lblM2RMS" class="teal">-96.0 dBFS</strong></span>
+            <span>Peak: <strong id="lblM2Peak">-96.0 dBFS</strong></span>
+            <span>Channel: <strong>1 (Reference)</strong></span>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ENHANCED OUTPUT WAVEFORM (PROMINENT LARGE PANEL) -->
+      <div class="waveform-card-refined main-output-card">
+        <div class="card-header-bar">
+          <span class="card-title-text purple">ENHANCED SPEECH OUTPUT</span>
+          <span class="card-sub-text" id="outputModeSubtitle">Real-Time AI + NLMS + Safety Limiter</span>
+        </div>
+        <div class="canvas-wrapper large-wrapper">
+          <canvas class="waveform-canvas large-canvas" id="canvasOut"></canvas>
+          <div class="canvas-overlay-text" id="outWaiting">WAITING FOR PROCESSED AUDIO OUTPUT</div>
+        </div>
+        <div class="waveform-footer-metrics">
+          <span>Output RMS: <strong id="lblOutRMS" class="purple">-96.0 dBFS</strong></span>
+          <span>Output Peak: <strong id="lblOutPeak">-96.0 dBFS</strong></span>
+          <span>Processing Latency: <strong id="lblOutLatency" class="green">0.0 ms</strong></span>
+          <span>Limiter State: <strong id="lblOutLimiter" class="green">NORMAL</strong></span>
+        </div>
+      </div>
+
+      <!-- LIVE SPECTROGRAM PANEL -->
+      <div class="waveform-card-refined spectrogram-card">
+        <div class="card-header-bar">
+          <span class="card-title-text">LIVE INPUT SPECTROGRAM</span>
+          <span class="card-sub-text">Streaming STFT (n_fft=512, hop=128, Hann window, 0 Hz — 8,000 Hz)</span>
+        </div>
+        <div class="canvas-wrapper spec-wrapper">
+          <canvas class="spectrogram-canvas" id="canvasSpectrogram"></canvas>
+          <div class="canvas-overlay-text" id="spectrogramWaiting">WAITING FOR PHYSICAL AUDIO INPUT</div>
+          <div class="spec-freq-axis">
+            <span>8 kHz</span>
+            <span>6 kHz</span>
+            <span>4 kHz</span>
+            <span>2 kHz</span>
+            <span>0 Hz</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- =================================================================== -->
+    <!-- TAB 3: AI & DSP -->
+    <!-- =================================================================== -->
+    <div class="tab-content" id="tab-ai-dsp">
+      
+      <div class="ai-dsp-grid">
+        
+        <!-- AI NOISE CLASSIFICATION -->
+        <div class="content-panel">
+          <div class="panel-header-title">AI NOISE CLASSIFICATION</div>
+          <div class="class-bars-container">
+            <div class="class-bar-group">
+              <div class="class-bar-info">
+                <span>STATIONARY (Fan / Hiss / Pink Noise)</span>
+                <span id="pctStationary">0.0%</span>
+              </div>
+              <div class="class-bar-track">
+                <div class="class-bar-fill stationary" id="barStationary" style="width: 0%"></div>
+              </div>
+            </div>
+            <div class="class-bar-group">
+              <div class="class-bar-info">
+                <span>NON-STATIONARY (Babble / Traffic)</span>
+                <span id="pctNonStationary">0.0%</span>
+              </div>
+              <div class="class-bar-track">
+                <div class="class-bar-fill non-stationary" id="barNonStationary" style="width: 0%"></div>
+              </div>
+            </div>
+            <div class="class-bar-group">
+              <div class="class-bar-info">
+                <span>IMPULSIVE (Clap / Tap / Click)</span>
+                <span id="pctImpulsive">0.0%</span>
+              </div>
+              <div class="class-bar-track">
+                <div class="class-bar-fill impulsive" id="barImpulsive" style="width: 0%"></div>
+              </div>
+            </div>
+          </div>
+          <div class="panel-footer-info">
+            Active Class: <strong id="dispActiveClass" class="cyan">None</strong>
+          </div>
+        </div>
+
+        <!-- AI ENHANCEMENT MODEL -->
+        <div class="content-panel">
+          <div class="panel-header-title">AI ENHANCEMENT MODEL</div>
+          <div class="kv-grid">
+            <div class="kv-item"><span class="kv-key">Architecture:</span><span class="kv-val">CNN + GRU Mask Model</span></div>
+            <div class="kv-item"><span class="kv-key">Parameters:</span><span class="kv-val purple">70,789</span></div>
+            <div class="kv-item"><span class="kv-key">Constraint:</span><span class="kv-val green">&lt; 100,000 params ✓</span></div>
+            <div class="kv-item"><span class="kv-key">Masking:</span><span class="kv-val">Complex Ratio Mask (CRM)</span></div>
+            <div class="kv-item"><span class="kv-key">Checkpoint:</span><span class="kv-val">Phase 2 Step 6 (Epoch 29)</span></div>
+            <div class="kv-item"><span class="kv-key">Inference Time:</span><span class="kv-val cyan" id="dispAIInferenceTime">~3.2 ms</span></div>
+          </div>
+        </div>
+
+        <!-- FEATURE PROCESSING -->
+        <div class="content-panel">
+          <div class="panel-header-title">FEATURE PROCESSING (STFT)</div>
+          <div class="kv-grid">
+            <div class="kv-item"><span class="kv-key">Sample Rate:</span><span class="kv-val">16,000 Hz</span></div>
+            <div class="kv-item"><span class="kv-key">FFT Size:</span><span class="kv-val">512 samples</span></div>
+            <div class="kv-item"><span class="kv-key">Window Size:</span><span class="kv-val">512 (Hann)</span></div>
+            <div class="kv-item"><span class="kv-key">Hop Size:</span><span class="kv-val">128 samples (8 ms)</span></div>
+            <div class="kv-item"><span class="kv-key">Freq Bins:</span><span class="kv-val">257 bins (0-8 kHz)</span></div>
+            <div class="kv-item"><span class="kv-key">Bin Resolution:</span><span class="kv-val">31.25 Hz / bin</span></div>
+          </div>
+        </div>
+
+        <!-- DSP PIPELINE STAGES -->
+        <div class="content-panel">
+          <div class="panel-header-title">DSP PIPELINE & DIAGNOSTICS</div>
+          <div class="kv-grid">
+            <div class="kv-item"><span class="kv-key">GCC-PHAT Delay <span class="info-icon" data-tooltip="Generalized Cross-Correlation with Phase Transform used to estimate acoustic propagation delay.">ⓘ</span>:</span><span class="kv-val" id="dispGCCDelay">0.0 samples</span></div>
+            <div class="kv-item"><span class="kv-key">Kalman Filter <span class="info-icon" data-tooltip="Delay Kalman Filter estimating smooth relative delay between primary and reference mics.">ⓘ</span>:</span><span class="kv-val cyan" id="dispKalmanDelay">0.0 samples</span></div>
+            <div class="kv-item"><span class="kv-key">NLMS Filter <span class="info-icon" data-tooltip="Normalized Least Mean Squares adaptive noise cancellation filter.">ⓘ</span>:</span><span class="kv-val green" id="dispNLMS">Active (Dual-Mic)</span></div>
+            <div class="kv-item"><span class="kv-key">VAD Protection <span class="info-icon" data-tooltip="Voice Activity Detector providing speech probability to prevent speech distortion.">ⓘ</span>:</span><span class="kv-val" id="dispVAD">Non-Speech (0%)</span></div>
+            <div class="kv-item"><span class="kv-key">Adaptive Fusion:</span><span class="kv-val green" id="dispFusion">AI + DSP Blended</span></div>
+            <div class="kv-item"><span class="kv-key">Safety Limiter:</span><span class="kv-val green" id="dispLimiter">Normal (&lt; -1 dBFS)</span></div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- SPEECH QUALITY EVALUATION TABLE (HELD-OUT TEST DATASET) -->
+      <section class="section-group" style="margin-top: 1rem;">
+        <div class="section-header">SPEECH QUALITY EVALUATION — HELD-OUT TEST DATASET</div>
+        
+        <div class="eval-table-wrapper">
+          <table class="eval-table">
+            <thead>
+              <tr>
+                <th>METRIC</th>
+                <th>NOISY (INPUT)</th>
+                <th>ENHANCED (OUTPUT)</th>
+                <th>CHANGE (Δ)</th>
+                <th>TARGET</th>
+                <th>TARGET STATUS</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>STOI</strong> <span class="info-icon" data-tooltip="Short-Time Objective Intelligibility. Measures speech intelligibility relative to a clean reference (0.0 to 1.0).">ⓘ</span></td>
+                <td id="tblStoiNoisy">0.8128</td>
+                <td id="tblStoiEnhanced" class="cyan">0.7936</td>
+                <td id="tblStoiDelta" class="red">-0.0192</td>
+                <td>&gt; 0.85</td>
+                <td><span class="status-pill warn" id="tblStoiStatus">TARGET NOT MET</span></td>
+              </tr>
+              <tr>
+                <td><strong>PESQ (WB 16 kHz)</strong> <span class="info-icon" data-tooltip="Perceptual Evaluation of Speech Quality (Wideband 16 kHz). Score ranges from 1.0 to 4.5.">ⓘ</span></td>
+                <td id="tblPesqNoisy">1.5116</td>
+                <td id="tblPesqEnhanced" class="purple">1.7745</td>
+                <td id="tblPesqDelta" class="green">+0.2629</td>
+                <td>&gt; 2.50</td>
+                <td><span class="status-pill warn" id="tblPesqStatus">TARGET NOT MET</span></td>
+              </tr>
+              <tr>
+                <td><strong>SNR (dB)</strong> <span class="info-icon" data-tooltip="Signal-to-Noise Ratio improvement on held-out test dataset in dB.">ⓘ</span></td>
+                <td id="tblSnrNoisy">+8.8861 dB</td>
+                <td id="tblSnrEnhanced" class="amber">+7.9611 dB</td>
+                <td id="tblSnrDelta" class="red">-0.9250 dB</td>
+                <td>&gt; +15.0 dB</td>
+                <td><span class="status-pill warn" id="tblSnrStatus">TARGET NOT MET</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="eval-source-footer">
+          <div class="eval-source-item"><span>Evaluation Source:</span> <strong>Latest Held-Out Test Evaluation</strong></div>
+          <div class="eval-source-item"><span>Test Dataset:</span> <strong>202 test samples (16 kHz native)</strong></div>
+          <div class="eval-source-item"><span>Classifier Accuracy:</span> <strong id="lblEvalAcc">76.24% (154/202 correct)</strong></div>
+          <div class="eval-source-item"><span>Evaluation Type:</span> <strong>Standard STOI &amp; PESQ WB 16 kHz</strong></div>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- =================================================================== -->
+    <!-- TAB 4: DEVICES -->
+    <!-- =================================================================== -->
+    <div class="tab-content" id="tab-devices">
+      
+      <div class="devices-grid">
+        
+        <!-- INPUT DEVICE SELECTION -->
+        <div class="content-panel">
+          <div class="panel-header-title">INPUT DEVICE (MICROPHONE)</div>
+          <div class="form-group">
+            <label class="form-label" for="selectInputDevice">Select Hardware Input Device:</label>
+            <select class="select-field" id="selectInputDevice">
+              <option value="">Scanning hardware devices...</option>
+            </select>
+          </div>
+          <div class="device-details-box" id="boxInputDevDetails">
+            <div>Device ID: <strong id="devInId">—</strong></div>
+            <div>Host API: <strong id="devInHost">—</strong></div>
+            <div>Max Channels: <strong id="devInCh">—</strong></div>
+            <div>Default SR: <strong id="devInSR">—</strong></div>
+          </div>
+        </div>
+
+        <!-- OUTPUT DEVICE SELECTION -->
+        <div class="content-panel">
+          <div class="panel-header-title">OUTPUT DEVICE (HEADPHONES / SPEAKERS)</div>
+          <div class="form-group">
+            <label class="form-label" for="selectOutputDevice">Select Hardware Output Device:</label>
+            <select class="select-field" id="selectOutputDevice">
+              <option value="">Scanning hardware devices...</option>
+            </select>
+          </div>
+          <div class="device-details-box" id="boxOutputDevDetails">
+            <div>Device ID: <strong id="devOutId">—</strong></div>
+            <div>Host API: <strong id="devOutHost">—</strong></div>
+            <div>Max Channels: <strong id="devOutCh">—</strong></div>
+            <div>Default SR: <strong id="devOutSR">—</strong></div>
+          </div>
+        </div>
+
+        <!-- MICROPHONE CHANNEL ROUTING -->
+        <div class="content-panel">
+          <div class="panel-header-title">MICROPHONE CHANNEL ROUTING</div>
+          <div class="routing-row">
+            <div class="form-group">
+              <label class="form-label" for="selectPrimaryChan">Primary Mic M1 (Speech+Noise):</label>
+              <select class="select-field" id="selectPrimaryChan">
+                <option value="0">Channel 0 (Left)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="selectRefChan">Reference Mic M2 (Noise):</label>
+              <select class="select-field" id="selectRefChan">
+                <option value="1">Channel 1 (Right)</option>
+              </select>
+            </div>
+          </div>
+          <div id="singleMicAlert" class="alert-box-warning" style="display: none;">
+            ⚠️ <strong>Single-channel input device detected:</strong> Selected device has only 1 physical input channel. Dual-microphone realtime ANC requires 2 channels. Reference mic synthesis disabled.
+          </div>
+        </div>
+
+        <!-- STREAM PARAMETERS -->
+        <div class="content-panel">
+          <div class="panel-header-title">AUDIO STREAM CONFIGURATION</div>
+          <div class="routing-row">
+            <div class="form-group">
+              <label class="form-label">Sampling Rate:</label>
+              <input type="text" class="input-field-readonly" value="16,000 Hz (Fixed)" readonly>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="selectBlockSize">PortAudio Block Size:</label>
+              <select class="select-field" id="selectBlockSize">
+                <option value="128">128 samples (8 ms)</option>
+                <option value="256" selected>256 samples (16 ms)</option>
+                <option value="512">512 samples (32 ms)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <div style="margin-top: 1rem;">
+        <button class="btn-secondary-action" id="btnRefreshDevices">⟳ Refresh Hardware Devices</button>
+      </div>
+
+    </div>
+
+    <!-- =================================================================== -->
+    <!-- TAB 5: DIAGNOSTICS -->
+    <!-- =================================================================== -->
+    <div class="tab-content" id="tab-diagnostics">
+      
+      <div class="diagnostics-grid">
+        
+        <!-- STREAM HEALTH METRICS -->
+        <div class="content-panel">
+          <div class="panel-header-title">STREAM & CALLBACK HEALTH</div>
+          <div class="diag-list">
+            <div class="diag-item"><span>Input Callbacks:</span><strong id="diagInCB">0</strong></div>
+            <div class="diag-item"><span>Input Frames Captured:</span><strong id="diagInFrames">0</strong></div>
+            <div class="diag-item"><span>Output Callbacks:</span><strong id="diagOutCB">0</strong></div>
+            <div class="diag-item"><span>Output Frames Sent:</span><strong id="diagOutFrames">0</strong></div>
+            <div class="diag-item"><span>Processing Blocks:</span><strong id="diagProcBlocks" class="green">0</strong></div>
+            <div class="diag-item"><span>Processing Errors:</span><strong id="diagProcErrs" class="green">0</strong></div>
+            <div class="diag-item"><span>Callback Errors:</span><strong id="diagCBErrs">0</strong></div>
+          </div>
+        </div>
+
+        <!-- BUFFER HEALTH -->
+        <div class="content-panel">
+          <div class="panel-header-title">BUFFER & QUEUE HEALTH</div>
+          <div class="diag-list">
+            <div class="diag-item"><span>Queue Depth:</span><strong id="diagQueueDepth" class="green">0 samples</strong></div>
+            <div class="diag-item"><span>Input Buffer Overflows:</span><strong id="diagOverflows">0</strong></div>
+            <div class="diag-item"><span>Output Buffer Underflows:</span><strong id="diagUnderflows">0</strong></div>
+            <div class="diag-item"><span>Dropped Hops:</span><strong id="diagDrops">0</strong></div>
+          </div>
+        </div>
+
+        <!-- LATENCY PROFILER -->
+        <div class="content-panel">
+          <div class="panel-header-title">LATENCY & RTF PROFILER</div>
+          <div class="diag-list">
+            <div class="diag-item"><span>Mean Hop Execution:</span><strong id="diagMeanProc" class="cyan">0.00 ms</strong></div>
+            <div class="diag-item"><span>p95 Hop Latency:</span><strong id="diagP95">0.00 ms</strong></div>
+            <div class="diag-item"><span>p99 Hop Latency:</span><strong id="diagP99">0.00 ms</strong></div>
+            <div class="diag-item"><span>Max Block Latency:</span><strong id="diagMaxProc">0.00 ms</strong></div>
+            <div class="diag-item"><span>Real-Time Factor (RTF):</span><strong id="diagRTF" class="green">0.000×</strong></div>
+            <div class="diag-item"><span>Total Audio Processed:</span><strong id="diagTotalAudio">0.0 s</strong></div>
+          </div>
+        </div>
+
+        <!-- SIGNAL LEVELS -->
+        <div class="content-panel">
+          <div class="panel-header-title">REALTIME AUDIO LEVELS</div>
+          <div class="diag-list">
+            <div class="diag-item"><span>Mic 1 Primary RMS:</span><strong id="diagM1RMS">-96.0 dBFS</strong></div>
+            <div class="diag-item"><span>Mic 1 Peak:</span><strong id="diagM1Peak">-96.0 dBFS</strong></div>
+            <div class="diag-item"><span>Mic 2 Reference RMS:</span><strong id="diagM2RMS">-96.0 dBFS</strong></div>
+            <div class="diag-item"><span>Mic 2 Peak:</span><strong id="diagM2Peak">-96.0 dBFS</strong></div>
+            <div class="diag-item"><span>Enhanced Output RMS:</span><strong id="diagOutRMS">-96.0 dBFS</strong></div>
+            <div class="diag-item"><span>Enhanced Output Peak:</span><strong id="diagOutPeak">-96.0 dBFS</strong></div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- REALTIME CONSOLE LOG -->
+      <section class="section-group" style="margin-top: 1rem;">
+        <div class="log-panel-header">
+          <span class="section-header" style="margin: 0;">HARDWARE STREAM &amp; SYSTEM LOG</span>
+          <button class="btn-sm-action" id="btnClearLog">Clear Log</button>
+        </div>
+        <div class="console-body" id="consoleBody">
+          <div class="log-entry info">[SYS] AETHEL123 Real-Time Audio Console initialized.</div>
+          <div class="log-entry info">[SYS] Physical device discovery ready.</div>
+        </div>
+      </section>
+
+    </div>
+
+  </main>
+
+  <!-- GLOBAL FOOTER -->
+  <footer class="global-footer">
+    <span>AETHEL123 — Real-Time Live Audio Console</span>
+    <span class="footer-status" id="footerStatusText">● NATIVE HARDWARE STREAMING ACTIVE</span>
+    <span>CNN+GRU CRM | 70,789 params | 16 kHz | n_fft=512 hop=128</span>
+  </footer>
+
+</div>
+
+<!-- TOOLTIP POPUP OVERLAY -->
+<div class="tooltip-popup" id="tooltipPopup"></div>
+
+<script src="js/main.js"></script>
+</body>
+</html>

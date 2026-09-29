@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Sequence
@@ -67,6 +68,8 @@ class Phase1Dataset(TorchDataset):
         return_tensors: bool = True,
         seed: int = 20260925,
         rng: np.random.Generator | None = None,
+        epoch: int = 0,
+        is_validation: bool = False,
     ) -> None:
         self.manifest_path = Path(manifest_path)
         if not self.manifest_path.exists():
@@ -83,6 +86,17 @@ class Phase1Dataset(TorchDataset):
         self.return_tensors = return_tensors and HAS_TORCH
         self.seed = seed
         self.rng = rng if rng is not None else np.random.default_rng(seed)
+        self.epoch = int(epoch)
+        self.is_validation = bool(is_validation)
+
+        # Epoch state with cross-process shared memory support for PyTorch DataLoader workers
+        if HAS_TORCH:
+            try:
+                self._epoch_tensor = torch.tensor([self.epoch], dtype=torch.int32).share_memory_()
+            except Exception:
+                self._epoch_tensor = torch.tensor([self.epoch], dtype=torch.int32)
+        else:
+            self._epoch_tensor = None
 
         # Load manifest records
         content = self.manifest_path.read_text(encoding="utf-8").strip()
@@ -108,17 +122,67 @@ class Phase1Dataset(TorchDataset):
 
         self.noise_selector = NoiseSelector(self.manifest_path, rng=self.rng)
 
+    def set_epoch(self, epoch: int) -> None:
+        """
+        Update current epoch for deterministic epoch-varying stochastic mixture generation.
+        If is_validation is True, the epoch remains locked at 0 for reproducible validation.
+        """
+        if self.is_validation:
+            self.epoch = 0
+            if self._epoch_tensor is not None:
+                self._epoch_tensor[0] = 0
+            return
+
+        self.epoch = int(epoch)
+        if self._epoch_tensor is not None:
+            self._epoch_tensor[0] = int(epoch)
+
+    @staticmethod
+    def compute_sample_seed(global_seed: int, epoch: int, worker_id: int, index: int) -> int:
+        """
+        Deterministic, collision-resistant 64-bit seed computation.
+        Guarantees:
+          1. Same (global_seed, epoch, worker_id, index) -> exact same sample seed.
+          2. Different epoch -> completely different pseudo-random stream.
+          3. Different worker_id -> independent stream (no worker collisions).
+          4. Independent of OS entropy, python hash randomization, or system time.
+        """
+        token = f"{global_seed}:{epoch}:{worker_id}:{index}".encode("utf-8")
+        h = hashlib.sha256(token).digest()
+        return int.from_bytes(h[:8], "little")
+
     def __len__(self) -> int:
         return len(self.clean_records)
 
     def __getitem__(self, index: int) -> dict:
         """
         PyTorch-compatible dataset indexing.
-        Generates deterministic sample for given index using index seed.
+        Generates deterministic sample for given (seed, epoch, worker_id, index).
         """
-        sample_rng = np.random.default_rng(self.seed + index)
+        worker_id = 0
+        if HAS_TORCH:
+            worker_info = torch.utils.data.get_worker_info()
+            if worker_info is not None:
+                worker_id = worker_info.id
+
+        current_epoch = 0 if self.is_validation else (
+            int(self._epoch_tensor[0]) if self._epoch_tensor is not None else self.epoch
+        )
+
+        sample_seed = self.compute_sample_seed(
+            global_seed=self.seed,
+            epoch=current_epoch,
+            worker_id=worker_id,
+            index=index,
+        )
+        sample_rng = np.random.default_rng(sample_seed)
         clean_record = self.clean_records[index % len(self.clean_records)]
-        return self.generate_sample(clean_record=clean_record, rng=sample_rng)
+        sample = self.generate_sample(clean_record=clean_record, rng=sample_rng)
+        sample["epoch"] = current_epoch
+        sample["sample_seed"] = sample_seed
+        sample["metadata"]["epoch"] = current_epoch
+        sample["metadata"]["sample_seed"] = sample_seed
+        return sample
 
     def generate_sample(
         self,
@@ -309,6 +373,9 @@ def create_dataloader(
     shuffle: bool = True,
     seed: int = 42,
     return_tensors: bool = True,
+    num_workers: int = 0,
+    is_validation: bool = False,
+    pin_memory: bool = False,
 ) -> TorchDataLoader | list[dict]:
     """
     Create a batched DataLoader for training, validation, or testing.
@@ -318,6 +385,7 @@ def create_dataloader(
         dataset_root=dataset_root,
         return_tensors=return_tensors,
         seed=seed,
+        is_validation=is_validation,
     )
 
     if HAS_TORCH and return_tensors:
@@ -328,6 +396,8 @@ def create_dataloader(
             shuffle=shuffle,
             collate_fn=custom_collate_fn,
             generator=generator,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
         )
 
     # Fallback generator for non-PyTorch environments
@@ -342,3 +412,4 @@ def create_dataloader(
         batch_samples = [dataset[idx] for idx in batch_indices]
         batches.append(custom_collate_fn(batch_samples))
     return batches
+

@@ -1,0 +1,23 @@
+{
+  "samples_evaluated": 20,
+  "baseline_stateless": {
+    "mean_snr_in": 10.57,
+    "mean_snr_out": 10.67,
+    "mean_snr_imp": 0.1,
+    "mean_stoi_out": 0.8657,
+    "mean_stoi_imp": 0.0013,
+    "mean_pesq_out": 1.5419,
+    "mean_pesq_imp": 0.0334,
+    "mean_hop_latency_ms": 1.75
+  },
+  "phase2_optimized_stateful": {
+    "mean_snr_in": 10.57,
+    "mean_snr_out": 10.43,
+    "mean_snr_imp": -0.14,
+    "mean_stoi_out": 0.8657,
+    "mean_stoi_imp": 0.0012,
+    "mean_pesq_out": 1.5405,
+    "mean_pesq_imp": 0.0319,
+    "mean_hop_latency_ms": 1.754
+  }
+}

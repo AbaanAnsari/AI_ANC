@@ -17,14 +17,24 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import numpy as np
-
 logger = logging.getLogger(__name__)
 
+import numpy as np
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CHECKPOINT = (
-    PROJECT_ROOT / "experiments" / "phase2_step6_targeted_crm_full" / "best_checkpoint.pt"
-)
+PHASE3_100EP_CHECKPOINT = PROJECT_ROOT / "experiments" / "phase3_100ep" / "best_checkpoint.pt"
+PHASE3_D_CHECKPOINT = PROJECT_ROOT / "experiments" / "phase3_D" / "best_checkpoint.pt"
+PHASE3_CHECKPOINT = PROJECT_ROOT / "experiments" / "phase3_H" / "best_checkpoint.pt"
+STEP6_CHECKPOINT = PROJECT_ROOT / "experiments" / "phase2_step6_targeted_crm_full" / "best_checkpoint.pt"
+
+if PHASE3_100EP_CHECKPOINT.exists():
+    DEFAULT_CHECKPOINT = PHASE3_100EP_CHECKPOINT
+elif PHASE3_D_CHECKPOINT.exists():
+    DEFAULT_CHECKPOINT = PHASE3_D_CHECKPOINT
+elif PHASE3_CHECKPOINT.exists():
+    DEFAULT_CHECKPOINT = PHASE3_CHECKPOINT
+else:
+    DEFAULT_CHECKPOINT = STEP6_CHECKPOINT
 
 
 @dataclass

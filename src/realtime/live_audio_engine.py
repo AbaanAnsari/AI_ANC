@@ -23,12 +23,15 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from src.inference.streaming_pipeline import (
-    StreamingPipeline,
+from src.realtime.constants import (
     SAMPLE_RATE,
+    BLOCK_SIZE,
+    BLOCK_DURATION_MS,
     HOP_SIZE,
     N_FFT,
+    AUDIO_CONFIG_INDICATOR,
 )
+from src.inference.streaming_pipeline import StreamingPipeline
 from src.realtime.audio_input import AudioInputStream
 from src.realtime.audio_output import AudioOutputStream
 from src.realtime.device_manager import AudioDeviceManager, AudioDeviceInfo
@@ -36,11 +39,13 @@ from src.realtime.ring_buffer import RingBuffer
 
 logger = logging.getLogger(__name__)
 
+_root = Path(__file__).resolve().parents[2]
+_p3_100 = _root / "experiments" / "phase3_100ep" / "best_checkpoint.pt"
+_p3_d = _root / "experiments" / "phase3_D" / "best_checkpoint.pt"
+_p2_step6 = _root / "experiments" / "phase2_step6_targeted_crm_full" / "best_checkpoint.pt"
+
 DEFAULT_CHECKPOINT = (
-    Path(__file__).resolve().parents[2]
-    / "experiments"
-    / "phase2_step6_targeted_crm_full"
-    / "best_checkpoint.pt"
+    _p3_100 if _p3_100.exists() else (_p3_d if _p3_d.exists() else _p2_step6)
 )
 
 
@@ -54,8 +59,9 @@ class LiveTelemetry:
     output_channels: int = 0
     primary_channel: int = 0
     ref_channel: int = 1
-    sample_rate: int = 16000
-    block_size: int = 256
+    sample_rate: int = SAMPLE_RATE
+    block_size: int = BLOCK_SIZE
+    block_duration_ms: float = BLOCK_DURATION_MS
     is_dual_mic: bool = True
     warning: Optional[str] = None
     error: Optional[str] = None
@@ -89,6 +95,21 @@ class LiveTelemetry:
     max_processing_time_ms: float = 0.0
     last_block_processing_ms: float = 0.0
     block_duration_ms: float = 16.0  # 256 / 16000 = 16 ms
+
+    # Latency Breakdown & Queue Health Metrics
+    queue_latency_ms: float = 0.0
+    input_buffer_latency_ms: float = 16.0
+    stft_latency_ms: float = 16.0
+    processing_latency_ms: float = 0.0
+    output_buffer_latency_ms: float = 0.0
+    total_end_to_end_latency_ms: float = 32.0
+    latency_status: str = "GOOD"
+
+    # Backlog Recovery & Drop Telemetry
+    backlog_drop_events: int = 0
+    dropped_samples_total: int = 0
+    dropped_ms_total: float = 0.0
+    last_drop_ms: float = 0.0
 
     # Buffer & Stream Health
     input_overflows: int = 0
@@ -134,11 +155,13 @@ class LiveAudioEngine:
         self._output_stream: Optional[AudioOutputStream] = None
         self._pipeline: Optional[StreamingPipeline] = None
 
-        # Buffers
-        self.buffer_capacity = int(5.0 * SAMPLE_RATE)  # 5 seconds capacity
+        # Buffers (bounded 1.0 second capacity for strict realtime operation)
+        self.buffer_capacity = int(1.0 * SAMPLE_RATE)
         self._m1_buffer = RingBuffer(self.buffer_capacity)
         self._m2_buffer = RingBuffer(self.buffer_capacity)
         self._output_buffer = RingBuffer(self.buffer_capacity)
+        self.diagnostic_delay_ms: float = 0.0
+
 
         # Worker thread
         self._worker_thread: Optional[threading.Thread] = None
@@ -402,6 +425,22 @@ class LiveAudioEngine:
                     "queue_depth": queue_depth,
                     "queue_overruns": in_overflow,
                     "queue_underruns": out_underflow,
+                    "queue_latency_ms": t.queue_latency_ms if t else 0.0,
+                    "total_latency_ms": t.total_end_to_end_latency_ms if t else 32.0,
+                    "latency_status": t.latency_status if t else "GOOD",
+                    "backlog_drops": t.backlog_drop_events if t else 0,
+                    "dropped_ms_total": round(t.dropped_ms_total, 1) if t else 0.0,
+                },
+                "latency": {
+                    "queue_ms": t.queue_latency_ms if t else 0.0,
+                    "input_buffer_ms": t.input_buffer_latency_ms if t else 16.0,
+                    "stft_ms": t.stft_latency_ms if t else 16.0,
+                    "processing_ms": t.processing_latency_ms if t else 0.0,
+                    "output_buffer_ms": t.output_buffer_latency_ms if t else 0.0,
+                    "total_ms": t.total_end_to_end_latency_ms if t else 32.0,
+                    "status": t.latency_status if t else "GOOD",
+                    "backlog_drops": t.backlog_drop_events if t else 0,
+                    "dropped_ms_total": round(t.dropped_ms_total, 1) if t else 0.0,
                 },
                 "output": {
                     "device_id": self.selected_output_id,
@@ -433,6 +472,9 @@ class LiveAudioEngine:
                 "fusion_enabled": bool(pipeline.enable_fusion) if pipeline else True,
                 "limiter_enabled": bool(pipeline.enable_limiter) if pipeline else True,
                 "rtf": rtf_val,
+                "latency_ms": t.total_end_to_end_latency_ms if t else 32.0,
+                "queue_latency_ms": t.queue_latency_ms if t else 0.0,
+                "latency_status": t.latency_status if t else "GOOD",
                 "input_rms": in_rms,
                 "reference_rms": ref_rms,
                 "output_rms": out_rms,
@@ -508,15 +550,19 @@ class LiveAudioEngine:
         primary_channel: int = 0,
         ref_channel: int = 1,
         sample_rate: int = SAMPLE_RATE,
-        block_size: int = 256,
+        block_size: int = BLOCK_SIZE,
         master_gain: float = 0.5,
     ) -> Tuple[bool, str]:
         """
-        Validate devices and start live audio streaming.
+        Validate devices and start live audio streaming with fixed 256-sample (16 ms @ 16 kHz) processing.
         """
         with self._state_lock:
             if self._is_running:
                 return True, "Stream is already running."
+
+            # Enforce fixed immutable block size (256 samples / 16 ms @ 16 kHz)
+            block_size = BLOCK_SIZE
+            sample_rate = SAMPLE_RATE
 
             # Resolve default devices if None
             if input_device_id is None:
@@ -550,13 +596,13 @@ class LiveAudioEngine:
             if not val_out:
                 return False, f"Output validation failed: {msg_out}"
 
-            # Store configuration
+            # Store configuration (immutable 256 block size)
             self.selected_input_id = input_device_id
             self.selected_output_id = output_device_id
             self.primary_channel = primary_channel
             self.ref_channel = det_in["ref_channel"]
             self.sample_rate = sample_rate
-            self.block_size = block_size
+            self.block_size = BLOCK_SIZE
             self.master_gain = master_gain
 
             # Reset buffers & telemetry
@@ -666,108 +712,163 @@ class LiveAudioEngine:
                 logger.warning("Error stopping output stream: %s", e)
             self._output_stream = None
 
+        if self._pipeline:
+            try:
+                self._pipeline.reset()
+            except Exception as e:
+                logger.warning("Error resetting streaming pipeline: %s", e)
+
     def _processing_worker(self) -> None:
         """
         Dedicated worker thread that processes audio blocks from the input ring buffer
         through the StreamingPipeline and writes enhanced audio to the output ring buffer.
+        Enforces strict real-time backpressure: latest audio wins, no multi-second queue backlog.
         """
-        hop_duration_s = HOP_SIZE / SAMPLE_RATE
+        MAX_QUEUE_MS = 100.0
+        TARGET_RECOVERY_MS = 16.0
+        MAX_OUTPUT_QUEUE_MS = 100.0
+
+        max_queue_samples = int(self.sample_rate * MAX_QUEUE_MS / 1000.0)
+        target_recovery_samples = int(self.sample_rate * TARGET_RECOVERY_MS / 1000.0)
+        max_output_queue_samples = int(self.sample_rate * MAX_OUTPUT_QUEUE_MS / 1000.0)
+
+        block_duration_s = self.block_size / self.sample_rate  # 256 / 16000 = 0.016 s (16 ms)
 
         while not self._stop_event.is_set():
-            # Check if at least one HOP_SIZE (128 samples) is available in input buffers
             avail_m1 = self._m1_buffer.available
             avail_m2 = self._m2_buffer.available
+            queued_samples = min(avail_m1, avail_m2)
 
-            if avail_m1 < HOP_SIZE or avail_m2 < HOP_SIZE:
-                # Sleep briefly (e.g. 2ms) to prevent busy waiting
-                time.sleep(0.002)
+            if queued_samples < self.block_size:
+                time.sleep(0.001)
                 continue
+
+            # Real-Time Backpressure Watchdog Policy ("LATEST AUDIO WINS")
+            if queued_samples > max_queue_samples:
+                drop_samples = queued_samples - target_recovery_samples
+                d1 = self._m1_buffer.discard(drop_samples)
+                d2 = self._m2_buffer.discard(drop_samples)
+                actual_dropped = min(d1, d2)
+
+                if actual_dropped > 0:
+                    dropped_ms = (actual_dropped / self.sample_rate) * 1000.0
+                    queue_before_ms = (queued_samples / self.sample_rate) * 1000.0
+                    queue_after_ms = ((queued_samples - actual_dropped) / self.sample_rate) * 1000.0
+
+                    self._telemetry.backlog_drop_events += 1
+                    self._telemetry.dropped_samples_total += actual_dropped
+                    self._telemetry.dropped_ms_total += dropped_ms
+                    self._telemetry.last_drop_ms = round(dropped_ms, 1)
+
+                    logger.warning(
+                        "[WARNING] REALTIME BACKLOG DROP: dropped_samples=%d (%.1f ms) queue_before=%.1f ms queue_after=%.1f ms",
+                        actual_dropped, dropped_ms, queue_before_ms, queue_after_ms
+                    )
+
+            # Check Output Queue Backlog
+            if self._output_buffer.available > max_output_queue_samples:
+                out_drop = self._output_buffer.available - (self.block_size * 2)
+                if out_drop > 0:
+                    self._output_buffer.discard(out_drop)
+                    logger.warning("[WARNING] OUTPUT BACKLOG TRIM: trimmed %d samples", out_drop)
+
+            # Optional dev diagnostic delay test mode
+            if hasattr(self, "diagnostic_delay_ms") and self.diagnostic_delay_ms > 0:
+                time.sleep(self.diagnostic_delay_ms / 1000.0)
 
             t_start = time.perf_counter()
 
-            # Read one hop from ring buffers
-            m1_hop = self._m1_buffer.read(HOP_SIZE)
-            m2_hop = self._m2_buffer.read(HOP_SIZE)
+            # Read exactly one 256-sample block from ring buffers
+            m1_block = self._m1_buffer.read(self.block_size)
+            m2_block = self._m2_buffer.read(self.block_size)
 
-            if len(m1_hop) < HOP_SIZE or len(m2_hop) < HOP_SIZE:
+            if len(m1_block) < self.block_size or len(m2_block) < self.block_size:
                 continue
 
-            # Phase 12: Real-time STFT Spectrogram computation from genuine physical M1 input
-            try:
-                self._spec_buffer = np.roll(self._spec_buffer, -HOP_SIZE)
-                self._spec_buffer[-HOP_SIZE:] = m1_hop
-                spec_win = self._spec_buffer * self._spec_window
-                fft_mag = np.abs(np.fft.rfft(spec_win, n=N_FFT))  # (257,)
-                # Decimate 256 frequency bins into 64 display bands
-                chunks = np.array_split(fft_mag[:256], 64)
-                band_mags = np.array([float(np.mean(c)) for c in chunks], dtype=np.float32)
-                # Convert to dBFS and normalize to 0.0 - 1.0 (range -80 dBFS to 0 dBFS)
-                band_db = 20.0 * np.log10(np.maximum(band_mags, 1e-6))
-                band_norm = np.clip((band_db + 80.0) / 80.0, 0.0, 1.0)
-                spec_slice = [round(float(v), 4) for v in band_norm]
+            enhanced_hops = []
+            spec_slice = [0.0] * 64
 
-                with self._spectrogram_lock:
-                    self._spectrogram_matrix.append(spec_slice)
-                    if len(self._spectrogram_matrix) > 32:
-                        self._spectrogram_matrix.pop(0)
-            except Exception as e:
-                spec_slice = [0.0] * 64
+            # Process block via 128-sample STFT hops (2 hops per 256-sample block)
+            for hop_idx in range(0, self.block_size, HOP_SIZE):
+                m1_hop = m1_block[hop_idx : hop_idx + HOP_SIZE]
+                m2_hop = m2_block[hop_idx : hop_idx + HOP_SIZE]
 
-            # Phase 10: "OUTPUT PATH TEST" — direct mic passthrough mode
-            if self.passthrough_mode:
-                enhanced_hop = m1_hop.copy()
-            elif self._pipeline is not None and not self._is_paused:
+                # Real-time STFT Spectrogram computation from genuine physical M1 input
                 try:
-                    self._pipeline.push(m1_hop, m2_hop)
-                    self._pipeline.process_available()
-                    enhanced_hop = self._pipeline.read_output(HOP_SIZE)
+                    self._spec_buffer = np.roll(self._spec_buffer, -HOP_SIZE)
+                    self._spec_buffer[-HOP_SIZE:] = m1_hop
+                    spec_win = self._spec_buffer * self._spec_window
+                    fft_mag = np.abs(np.fft.rfft(spec_win, n=N_FFT))  # (257,)
+                    chunks = np.array_split(fft_mag[:256], 64)
+                    band_mags = np.array([float(np.mean(c)) for c in chunks], dtype=np.float32)
+                    band_db = 20.0 * np.log10(np.maximum(band_mags, 1e-6))
+                    band_norm = np.clip((band_db + 80.0) / 80.0, 0.0, 1.0)
+                    spec_slice = [round(float(v), 4) for v in band_norm]
 
-                    if len(enhanced_hop) < HOP_SIZE:
-                        # Fallback pad with primary mic if pipeline buffer is initializing
-                        pad = m1_hop[len(enhanced_hop):]
-                        enhanced_hop = np.concatenate([enhanced_hop, pad])
-
-                    # Phase 9: Assert/verify finite output, never pass NaN or Inf
-                    if not np.all(np.isfinite(enhanced_hop)):
-                        logger.warning("[WARN] Non-finite output detected in pipeline! Clamping to 0.0")
-                        enhanced_hop = np.nan_to_num(enhanced_hop, nan=0.0, posinf=0.0, neginf=0.0)
+                    with self._spectrogram_lock:
+                        self._spectrogram_matrix.append(spec_slice)
+                        if len(self._spectrogram_matrix) > 32:
+                            self._spectrogram_matrix.pop(0)
                 except Exception as e:
-                    self._processing_errors += 1
-                    logger.error("[ERR] Processing block error in pipeline: %s", e)
+                    spec_slice = [0.0] * 64
+
+                # Phase 10: "OUTPUT PATH TEST" — direct mic passthrough mode
+                if self.passthrough_mode:
+                    enhanced_hop = m1_hop.copy()
+                elif self._pipeline is not None and not self._is_paused:
+                    try:
+                        self._pipeline.push(m1_hop, m2_hop)
+                        self._pipeline.process_available()
+                        enhanced_hop = self._pipeline.read_output(HOP_SIZE)
+
+                        if len(enhanced_hop) < HOP_SIZE:
+                            pad = m1_hop[len(enhanced_hop):]
+                            enhanced_hop = np.concatenate([enhanced_hop, pad])
+
+                        if not np.all(np.isfinite(enhanced_hop)):
+                            logger.warning("[WARN] Non-finite output detected in pipeline! Clamping to 0.0")
+                            enhanced_hop = np.nan_to_num(enhanced_hop, nan=0.0, posinf=0.0, neginf=0.0)
+                    except Exception as e:
+                        self._processing_errors += 1
+                        logger.error("[ERR] Processing block error in pipeline: %s", e)
+                        enhanced_hop = m1_hop * 0.5
+                else:
                     enhanced_hop = m1_hop * 0.5
-            else:
-                enhanced_hop = m1_hop * 0.5  # Paused / attenuated
+
+                enhanced_hops.append(enhanced_hop)
+
+            enhanced_block = np.concatenate(enhanced_hops)
 
             t_proc = time.perf_counter() - t_start
             proc_ms = t_proc * 1000.0
 
-            # Write enhanced hop to output ring buffer
-            w_out = self._output_buffer.write(enhanced_hop)
-            if w_out < len(enhanced_hop):
+            # Write full 256-sample enhanced block to output ring buffer
+            w_out = self._output_buffer.write(enhanced_block)
+            if w_out < len(enhanced_block):
                 self._telemetry.dropped_blocks += 1
 
             # Update metrics & telemetry
-            self._total_hops_processed += 1
+            self._total_hops_processed += len(enhanced_hops)
             self._total_processing_time_s += t_proc
-            self._total_audio_duration_s += hop_duration_s
+            self._total_audio_duration_s += block_duration_s
 
             self._block_times_ms.append(proc_ms)
             if len(self._block_times_ms) > self._max_history:
                 self._block_times_ms.pop(0)
 
-            # Phase 5: Rate-limited diagnostics logging (~once per second)
+            # Rate-limited diagnostics logging (~once per second)
             now_sec = time.time()
             if now_sec - self._last_proc_log_time >= 1.0:
                 self._last_proc_log_time = now_sec
-                in_rms_log = float(np.sqrt(np.mean(m1_hop ** 2)))
-                out_rms_log = float(np.sqrt(np.mean(enhanced_hop ** 2)))
+                in_rms_log = float(np.sqrt(np.mean(m1_block ** 2)))
+                out_rms_log = float(np.sqrt(np.mean(enhanced_block ** 2)))
                 logger.info(
-                    "[INFO] Processing block: block=%d input_rms=%.6f output_rms=%.6f errors=%d passthrough=%s",
-                    self._total_hops_processed, in_rms_log, out_rms_log, self._processing_errors, self.passthrough_mode,
+                    "[INFO] Processing block: block=%d (256 smp) input_rms=%.6f output_rms=%.6f errors=%d passthrough=%s",
+                    self._total_hops_processed // 2, in_rms_log, out_rms_log, self._processing_errors, self.passthrough_mode,
                 )
 
             # Update telemetry snapshot
-            self._update_telemetry_snapshot(m1_hop, m2_hop, enhanced_hop, proc_ms, spec_slice)
+            self._update_telemetry_snapshot(m1_block, m2_block, enhanced_block, proc_ms, spec_slice)
 
     def _update_telemetry_snapshot(
         self,
@@ -829,7 +930,33 @@ class LiveAudioEngine:
 
         t.queue_depth_samples = self._m1_buffer.available
 
-        # Waveforms for live visualizer (use 5 decimal places so real audio is never zeroed out!)
+        # Latency Breakdown Calculations
+        queue_samples = self._m1_buffer.available
+        queue_lat_ms = (queue_samples / self.sample_rate) * 1000.0
+        in_buf_lat_ms = (self.block_size / self.sample_rate) * 1000.0
+        stft_lat_ms = (N_FFT / self.sample_rate) * 1000.0
+        proc_lat_ms = proc_ms
+        out_buf_samples = self._output_buffer.available
+        out_buf_lat_ms = (out_buf_samples / self.sample_rate) * 1000.0
+        total_lat_ms = queue_lat_ms + in_buf_lat_ms + proc_lat_ms + out_buf_lat_ms
+
+        t.queue_latency_ms = round(queue_lat_ms, 1)
+        t.input_buffer_latency_ms = round(in_buf_lat_ms, 1)
+        t.stft_latency_ms = round(stft_lat_ms, 1)
+        t.processing_latency_ms = round(proc_lat_ms, 2)
+        t.output_buffer_latency_ms = round(out_buf_lat_ms, 1)
+        t.total_end_to_end_latency_ms = round(total_lat_ms, 1)
+
+        if total_lat_ms <= 30.0:
+            t.latency_status = "GOOD"
+        elif total_lat_ms <= 50.0:
+            t.latency_status = "NORMAL"
+        elif total_lat_ms <= 100.0:
+            t.latency_status = "WARNING"
+        else:
+            t.latency_status = "CRITICAL"
+
+        # Waveforms for live visualizer
         step = max(1, len(m1_hop) // 32)
         t.m1_waveform = [round(float(v), 5) for v in m1_hop[::step]]
         t.m2_waveform = [round(float(v), 5) for v in m2_hop[::step]]
@@ -886,6 +1013,17 @@ class LiveAudioEngine:
                 "dropped_blocks": t.dropped_blocks,
                 "queue_depth": t.queue_depth_samples,
                 "processing_errors": self._processing_errors,
+                "queue_latency_ms": t.queue_latency_ms,
+                "input_buffer_latency_ms": t.input_buffer_latency_ms,
+                "stft_latency_ms": t.stft_latency_ms,
+                "processing_latency_ms": t.processing_latency_ms,
+                "output_buffer_latency_ms": t.output_buffer_latency_ms,
+                "total_end_to_end_latency_ms": t.total_end_to_end_latency_ms,
+                "latency_status": t.latency_status,
+                "backlog_drop_events": t.backlog_drop_events,
+                "dropped_samples_total": t.dropped_samples_total,
+                "dropped_ms_total": round(t.dropped_ms_total, 1),
+                "last_drop_ms": t.last_drop_ms,
             },
             "spectrogram_slice": t.spectrogram_slice,
             "waveforms": {
@@ -894,3 +1032,4 @@ class LiveAudioEngine:
                 "output": t.output_waveform,
             },
         }
+

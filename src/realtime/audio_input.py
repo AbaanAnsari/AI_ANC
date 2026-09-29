@@ -16,6 +16,7 @@ import numpy as np
 import sounddevice as sd
 
 from src.realtime.ring_buffer import RingBuffer
+from src.realtime.constants import SAMPLE_RATE, BLOCK_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ class AudioInputStream:
     sample_rate : int
         Sampling rate in Hz. Default 16000.
     block_size : int
-        PortAudio block size in frames. Default 256.
+        Audio block size in frames. Fixed to 256.
     m1_buffer : RingBuffer
         Ring buffer for primary mic samples.
     m2_buffer : RingBuffer
@@ -50,10 +51,10 @@ class AudioInputStream:
         channels: int,
         primary_channel: int,
         ref_channel: int,
-        sample_rate: int,
-        block_size: int,
-        m1_buffer: RingBuffer,
-        m2_buffer: RingBuffer,
+        sample_rate: int = SAMPLE_RATE,
+        block_size: int = BLOCK_SIZE,
+        m1_buffer: RingBuffer = None,
+        m2_buffer: RingBuffer = None,
     ) -> None:
         self.device_id = device_id
         self.channels = channels
@@ -63,6 +64,11 @@ class AudioInputStream:
         self.block_size = block_size
         self._m1_buffer = m1_buffer
         self._m2_buffer = m2_buffer
+
+        # Buffering adapter for hardware with variable/non-256 buffer sizes
+        self._adapter_m1 = np.empty(0, dtype=np.float32)
+        self._adapter_m2 = np.empty(0, dtype=np.float32)
+        self._adapter_lock = threading.Lock()
 
         self._stream: Optional[sd.InputStream] = None
         self._is_running: bool = False
@@ -101,7 +107,7 @@ class AudioInputStream:
             return self._telemetry_buffer[-n:].copy()
 
     def _callback(self, indata: np.ndarray, frames: int, time_info: dict, status: sd.CallbackFlags) -> None:
-        """Lightweight non-blocking audio capture callback."""
+        """Lightweight non-blocking audio capture callback with strict 256-sample block buffering adapter."""
         import time as _time
         now = _time.time()
         self.input_callback_count += 1
@@ -131,40 +137,51 @@ class AudioInputStream:
             # Single-mic fallback: zero reference
             m2_chunk = np.zeros(frames, dtype=np.float32)
 
-        # Quick peak & RMS for monitoring
-        peak1 = float(np.max(np.abs(m1_chunk))) if len(m1_chunk) > 0 else 0.0
-        rms1 = float(np.sqrt(np.mean(m1_chunk ** 2))) if len(m1_chunk) > 0 else 0.0
-        rms2 = float(np.sqrt(np.mean(m2_chunk ** 2))) if len(m2_chunk) > 0 else 0.0
+        # Buffer incoming samples into adapter to guarantee fixed block_size (256) processing
+        with self._adapter_lock:
+            self._adapter_m1 = np.concatenate([self._adapter_m1, m1_chunk])
+            self._adapter_m2 = np.concatenate([self._adapter_m2, m2_chunk])
 
-        self.last_input_peak_m1 = peak1
-        self.last_input_rms_m1 = rms1
-        self.last_input_rms_m2 = rms2
+            while len(self._adapter_m1) >= self.block_size:
+                block_m1 = self._adapter_m1[:self.block_size]
+                block_m2 = self._adapter_m2[:self.block_size]
+                self._adapter_m1 = self._adapter_m1[self.block_size:]
+                self._adapter_m2 = self._adapter_m2[self.block_size:]
 
-        if peak1 > 1e-4:
-            self.input_nonzero_frames += frames
+                # Quick peak & RMS for monitoring on this exact 256-sample block
+                peak1 = float(np.max(np.abs(block_m1))) if len(block_m1) > 0 else 0.0
+                rms1 = float(np.sqrt(np.mean(block_m1 ** 2))) if len(block_m1) > 0 else 0.0
+                rms2 = float(np.sqrt(np.mean(block_m2 ** 2))) if len(block_m2) > 0 else 0.0
 
-        # Store in rolling telemetry buffer
-        with self._telemetry_lock:
-            if frames >= self._telemetry_capacity:
-                self._telemetry_buffer[:] = m1_chunk[-self._telemetry_capacity:]
-            else:
-                self._telemetry_buffer = np.roll(self._telemetry_buffer, -frames)
-                self._telemetry_buffer[-frames:] = m1_chunk
+                self.last_input_peak_m1 = peak1
+                self.last_input_rms_m1 = rms1
+                self.last_input_rms_m2 = rms2
 
-        # Push to ring buffers without blocking
-        w1 = self._m1_buffer.write(m1_chunk)
-        w2 = self._m2_buffer.write(m2_chunk)
+                if peak1 > 1e-4:
+                    self.input_nonzero_frames += len(block_m1)
 
-        if w1 < frames or w2 < frames:
-            self.overflow_count += 1
+                # Store in rolling telemetry buffer
+                with self._telemetry_lock:
+                    if len(block_m1) >= self._telemetry_capacity:
+                        self._telemetry_buffer[:] = block_m1[-self._telemetry_capacity:]
+                    else:
+                        self._telemetry_buffer = np.roll(self._telemetry_buffer, -len(block_m1))
+                        self._telemetry_buffer[-len(block_m1):] = block_m1
 
-        # Rate-limited diagnostics logging (Phase 5: ~once per second)
-        if now - self._last_log_time >= 1.0:
-            self._last_log_time = now
-            logger.info(
-                "[INFO] Input callback active: frames=%d rms=%.6f peak=%.6f nonzero=%s",
-                frames, rms1, peak1, (peak1 > 1e-4),
-            )
+                # Push exact 256-sample block to ring buffers
+                w1 = self._m1_buffer.write(block_m1)
+                w2 = self._m2_buffer.write(block_m2)
+
+                if w1 < len(block_m1) or w2 < len(block_m2):
+                    self.overflow_count += 1
+
+                # Rate-limited diagnostics logging (~once per second)
+                if now - self._last_log_time >= 1.0:
+                    self._last_log_time = now
+                    logger.info(
+                        "[INFO] Input callback active: block_size=%d rms=%.6f peak=%.6f nonzero=%s",
+                        self.block_size, rms1, peak1, (peak1 > 1e-4),
+                    )
 
     def start(self) -> None:
         """Start capturing audio from physical hardware."""

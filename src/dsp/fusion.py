@@ -41,6 +41,7 @@ Fusion Strategy:
     No abrupt weight switching — all weights are exponentially smoothed.
 """
 from __future__ import annotations
+from typing import Optional
 
 import numpy as np
 
@@ -53,15 +54,15 @@ from src.dsp.vad import VoiceActivityDetector
 # ---------------------------------------------------------------------------
 
 # Base AI weight per noise class (DSP weight = 1 - AI weight)
-# These are priors; actual weights are modulated by confidence and VAD
+# AI model (CRM CNN+GRU) is the primary enhancement engine;
+# NLMS provides subtle residual cancellation without degrading speech fidelity.
 _BASE_AI_WEIGHTS = {
-    0: 0.45,   # stationary: DSP (NLMS) is very effective
-    1: 0.55,   # non-stationary: AI is better at tracking
-    2: 0.70,   # impulsive: AI transient-aware, NLMS may ring
+    0: 0.85,   # stationary: AI primary, subtle NLMS residual
+    1: 0.90,   # non-stationary: AI tracks rapid noise modulations
+    2: 0.95,   # impulsive: AI transient-aware, minimal NLMS to avoid ringing
 }
 
-_DEFAULT_AI_WEIGHT = 0.50   # fallback if class unknown
-
+_DEFAULT_AI_WEIGHT = 0.85   # AI-first fallback
 
 # ---------------------------------------------------------------------------
 # Confidence-modulated fusion
@@ -98,11 +99,10 @@ def compute_fusion_weights(
     base_ai = _BASE_AI_WEIGHTS.get(noise_class, _DEFAULT_AI_WEIGHT)
     base_dsp = 1.0 - base_ai
 
-    # Confidence modulation: if classifier is uncertain, trust DSP less
+    # Confidence modulation: if classifier is uncertain, trust AI more (less DSP aggressiveness)
     if confidence < low_confidence_threshold:
-        # Blend toward 50/50 proportionally to uncertainty
         uncertainty_blend = 1.0 - (confidence / low_confidence_threshold)
-        base_ai = base_ai + uncertainty_blend * (0.5 - base_ai) * 0.5
+        base_ai = min(1.0, base_ai + uncertainty_blend * 0.10)
         base_dsp = 1.0 - base_ai
 
     # Speech protection: during strong speech, reduce total suppression
@@ -208,19 +208,31 @@ class AdaptiveFusionEngine:
         speech_threshold: float = 0.4,
         max_suppression_speech_db: float = -6.0,
         max_suppression_silence_db: float = -40.0,
+        fixed_nlms_weight: Optional[float] = None,
+        enable_speech_protection: bool = True,
     ) -> None:
         self.sample_rate = int(sample_rate)
+        self.fixed_nlms_weight = float(fixed_nlms_weight) if fixed_nlms_weight is not None else None
+        self.enable_speech_protection = bool(enable_speech_protection)
+
         self._weight_smoother = WeightSmoother(alpha=weight_smoothing_alpha)
         self._speech_protector = SpeechProtector(
             speech_threshold=speech_threshold,
             max_suppression_speech_db=max_suppression_speech_db,
             max_suppression_silence_db=max_suppression_silence_db,
+            enabled=enable_speech_protection,
         )
         self._transient_detector = ImpulsiveTransientDetector()
 
         # Diagnostics
-        self._last_weights: dict = {"w_ai": 0.5, "w_dsp": 0.5}
+        self._last_weights: dict = {
+            "w_ai": 1.0 if fixed_nlms_weight == 0.0 else 0.5,
+            "w_dsp": 0.0 if fixed_nlms_weight == 0.0 else 0.5,
+        }
         self._last_speech_prob: float = 0.0
+        self._last_ai_rms: float = 0.0
+        self._last_dsp_rms: float = 0.0
+        self._last_fused_rms: float = 0.0
         self._n_blocks_processed: int = 0
 
     def fuse(
@@ -231,6 +243,7 @@ class AdaptiveFusionEngine:
         noise_class: int = 0,
         confidence: float = 0.5,
         speech_probability: float = 0.0,
+        override_nlms_weight: Optional[float] = None,
     ) -> dict:
         """
         Fuse AI and DSP enhanced signals.
@@ -249,15 +262,20 @@ class AdaptiveFusionEngine:
             Classifier max softmax probability.
         speech_probability : float
             VAD speech probability.
+        override_nlms_weight : Optional[float]
+            If provided, overrides fusion weight for this call (e.g. 0.0 for pure AI).
 
         Returns
         -------
         dict with:
-            fused_signal : np.ndarray, shape (N,) float32
-            w_ai         : float — smoothed AI weight
-            w_dsp        : float — smoothed DSP weight
+            fused_signal    : np.ndarray, shape (N,) float32
+            w_ai            : float — AI weight applied
+            w_dsp           : float — DSP weight applied
             protection_gain : float — speech protection gain applied
-            is_transient : bool — transient detected
+            is_transient    : bool — transient detected
+            ai_rms          : float
+            dsp_rms         : float
+            fused_rms       : float
         """
         ai_enhanced = np.asarray(ai_enhanced, dtype=np.float32).ravel()
         dsp_enhanced = np.asarray(dsp_enhanced, dtype=np.float32).ravel()
@@ -274,36 +292,48 @@ class AdaptiveFusionEngine:
         dsp_enhanced = np.where(np.isfinite(dsp_enhanced), dsp_enhanced, 0.0)
         original_primary = np.where(np.isfinite(original_primary), original_primary, 0.0)
 
+        self._last_ai_rms = float(np.sqrt(np.mean(ai_enhanced.astype(np.float64)**2) + 1e-12))
+        self._last_dsp_rms = float(np.sqrt(np.mean(dsp_enhanced.astype(np.float64)**2) + 1e-12))
+
         # 1. Detect transient
         is_transient = self._transient_detector.detect(original_primary)
 
-        # 2. Compute fusion weights
-        weight_dict = compute_fusion_weights(
-            noise_class=noise_class,
-            confidence=confidence,
-            speech_probability=speech_probability,
-        )
+        # 2. Determine fusion weights
+        active_nlms_weight = override_nlms_weight if override_nlms_weight is not None else self.fixed_nlms_weight
 
-        # 3. Smooth weights
-        w_ai, w_dsp = self._weight_smoother.update(weight_dict["w_ai"], weight_dict["w_dsp"])
+        if active_nlms_weight is not None:
+            w_dsp = float(np.clip(active_nlms_weight, 0.0, 1.0))
+            w_ai = 1.0 - w_dsp
+        else:
+            weight_dict = compute_fusion_weights(
+                noise_class=noise_class,
+                confidence=confidence,
+                speech_probability=speech_probability,
+            )
+            w_ai, w_dsp = self._weight_smoother.update(weight_dict["w_ai"], weight_dict["w_dsp"])
 
-        # 4. Mix AI and DSP signals
+        # 3. Mix AI and DSP signals
         mixed = w_ai * ai_enhanced + w_dsp * dsp_enhanced
 
-        # 5. Speech protection
-        protection_gain = self._speech_protector.compute_protection_gain(
-            speech_probability=speech_probability,
-            noise_class=noise_class,
-            is_impulsive_transient=is_transient,
-        )
-        protected = self._speech_protector.apply_protection(
-            signal=mixed,
-            reference_signal=original_primary,
-            speech_probability=speech_probability,
-            noise_class=noise_class,
-            is_impulsive_transient=is_transient,
-        )
+        # 4. Speech protection (only if enabled)
+        if self.enable_speech_protection:
+            protection_gain = self._speech_protector.compute_protection_gain(
+                speech_probability=speech_probability,
+                noise_class=noise_class,
+                is_impulsive_transient=is_transient,
+            )
+            protected = self._speech_protector.apply_protection(
+                signal=mixed,
+                reference_signal=original_primary,
+                speech_probability=speech_probability,
+                noise_class=noise_class,
+                is_impulsive_transient=is_transient,
+            )
+        else:
+            protection_gain = 0.0
+            protected = mixed
 
+        self._last_fused_rms = float(np.sqrt(np.mean(protected.astype(np.float64)**2) + 1e-12))
         self._last_weights = {"w_ai": w_ai, "w_dsp": w_dsp}
         self._last_speech_prob = speech_probability
         self._n_blocks_processed += 1
@@ -317,6 +347,9 @@ class AdaptiveFusionEngine:
             "noise_class": noise_class,
             "confidence": confidence,
             "speech_probability": speech_probability,
+            "ai_rms": self._last_ai_rms,
+            "dsp_rms": self._last_dsp_rms,
+            "fused_rms": self._last_fused_rms,
         }
 
     def reset(self) -> None:
@@ -324,6 +357,9 @@ class AdaptiveFusionEngine:
         self._weight_smoother.reset()
         self._speech_protector.reset()
         self._transient_detector.reset()
+        self._last_ai_rms = 0.0
+        self._last_dsp_rms = 0.0
+        self._last_fused_rms = 0.0
         self._n_blocks_processed = 0
 
     @property
@@ -333,4 +369,9 @@ class AdaptiveFusionEngine:
             "last_w_ai": self._last_weights.get("w_ai", 0.5),
             "last_w_dsp": self._last_weights.get("w_dsp", 0.5),
             "last_speech_prob": self._last_speech_prob,
+            "last_ai_rms": self._last_ai_rms,
+            "last_dsp_rms": self._last_dsp_rms,
+            "last_fused_rms": self._last_fused_rms,
+            "speech_protection_enabled": self.enable_speech_protection,
+            "fixed_nlms_weight": self.fixed_nlms_weight,
         }

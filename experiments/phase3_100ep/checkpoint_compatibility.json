@@ -1,0 +1,102 @@
+{
+  "checkpoint": "experiments\\phase3_100ep\\best_checkpoint.pt",
+  "epoch": 68,
+  "best_val_loss": -2.3581946262946496,
+  "strict_load_success": true,
+  "missing_keys_count": 0,
+  "unexpected_keys_count": 0,
+  "total_parameters": 70789,
+  "trainable_parameters": 70789,
+  "expected_trainable_parameters": 70789,
+  "architecture_name": "LightweightCNNGRUMaskModel",
+  "deployment_engine_load_success": true,
+  "layer_shapes": {
+    "conv1.0.weight": [
+      16,
+      2,
+      5,
+      3
+    ],
+    "conv1.0.bias": [
+      16
+    ],
+    "conv1.1.weight": [
+      16
+    ],
+    "conv1.1.bias": [
+      16
+    ],
+    "conv2.0.weight": [
+      32,
+      16,
+      5,
+      3
+    ],
+    "conv2.0.bias": [
+      32
+    ],
+    "conv2.1.weight": [
+      32
+    ],
+    "conv2.1.bias": [
+      32
+    ],
+    "conv3.0.weight": [
+      16,
+      32,
+      5,
+      3
+    ],
+    "conv3.0.bias": [
+      16
+    ],
+    "conv3.1.weight": [
+      16
+    ],
+    "conv3.1.bias": [
+      16
+    ],
+    "proj.0.weight": [
+      32,
+      528
+    ],
+    "proj.0.bias": [
+      32
+    ],
+    "gru.weight_ih_l0": [
+      144,
+      32
+    ],
+    "gru.weight_hh_l0": [
+      144,
+      48
+    ],
+    "gru.bias_ih_l0": [
+      144
+    ],
+    "gru.bias_hh_l0": [
+      144
+    ],
+    "enhancement_head.proj.weight": [
+      514,
+      48
+    ],
+    "enhancement_head.proj.bias": [
+      514
+    ],
+    "classification_head.classifier.0.weight": [
+      16,
+      48
+    ],
+    "classification_head.classifier.0.bias": [
+      16
+    ],
+    "classification_head.classifier.2.weight": [
+      3,
+      16
+    ],
+    "classification_head.classifier.2.bias": [
+      3
+    ]
+  }
+}

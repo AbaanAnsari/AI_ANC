@@ -135,13 +135,21 @@ class LightweightCNNGRUMaskModel(nn.Module):
             )
 
     def forward(
-        self, noisy_features: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        self,
+        noisy_features: torch.Tensor,
+        hidden_state: torch.Tensor | None = None,
+        return_hidden: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Parameters
         ----------
         noisy_features : torch.Tensor
             Input complex STFT features of shape (B, 2, 257, T).
+        hidden_state : torch.Tensor or None, optional
+            Recurrent GRU hidden state of shape (1, B, 48) for stateful streaming.
+        return_hidden : bool, optional
+            If True, return (enhanced_stft, classification_logits, mask, next_hidden).
+            Default is False for backward compatibility with 3-element tuple callers.
 
         Returns
         -------
@@ -151,6 +159,8 @@ class LightweightCNNGRUMaskModel(nn.Module):
             Noise class prediction logits of shape (B, 3).
         mask : torch.Tensor
             Complex mask of shape (B, 2, 257, T). For monitoring/analysis.
+        next_hidden : torch.Tensor (only if return_hidden=True)
+            Updated GRU hidden state of shape (1, B, 48).
         """
         batch_size, channels, freq_bins, time_frames = noisy_features.shape
 
@@ -166,14 +176,16 @@ class LightweightCNNGRUMaskModel(nn.Module):
         # 3. Projection to GRU input size
         x_proj = self.proj(x)  # (B, T, 32)
 
-        # 4. GRU Temporal Tracking
-        gru_out, _ = self.gru(x_proj)  # (B, T, 48)
+        # 4. GRU Temporal Tracking (supports persistent recurrent state)
+        gru_out, next_hidden = self.gru(x_proj, hidden_state)  # (B, T, 48), (1, B, 48)
 
         # 5. Multi-Task Heads
         # Mask head receives GRU output AND noisy STFT for masking
         enhanced_stft, mask = self.enhancement_head(gru_out, noisy_features)  # (B, 2, 257, T)
         classification_logits = self.classification_head(gru_out)              # (B, 3)
 
+        if return_hidden:
+            return enhanced_stft, classification_logits, mask, next_hidden
         return enhanced_stft, classification_logits, mask
 
     def parameter_summary(self) -> dict:

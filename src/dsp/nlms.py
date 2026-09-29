@@ -115,6 +115,9 @@ class NLMSFilter:
         epsilon: float = 1e-6,
         impulsive_gate: bool = False,
         impulsive_threshold: Optional[float] = 5.0,
+        adaptation_enabled: bool = True,
+        speech_freeze_threshold: float = 0.5,
+        max_weight_norm: float = 5.0,
     ) -> None:
         if filter_length < 1:
             raise ValueError(f"filter_length must be >= 1, got {filter_length}")
@@ -133,6 +136,9 @@ class NLMSFilter:
         self.epsilon = float(epsilon)
         self.impulsive_gate = bool(impulsive_gate)
         self.impulsive_threshold = float(impulsive_threshold) if impulsive_threshold is not None else 5.0
+        self.adaptation_enabled = bool(adaptation_enabled)
+        self.speech_freeze_threshold = float(speech_freeze_threshold)
+        self.max_weight_norm = float(max_weight_norm)
 
         # Adaptive weights — initialized to zero
         self._weights: np.ndarray = np.zeros(self.filter_length, dtype=np.float64)
@@ -257,6 +263,78 @@ class NLMSFilter:
 
         return error_block, estimated_noise_block
 
+    def process_hop(
+        self,
+        primary_hop: np.ndarray,
+        reference_hop: np.ndarray,
+        speech_prob: float = 0.0,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Process a 128-sample audio hop through the NLMS filter.
+
+        Maintains persistent FIR reference history across consecutive hops.
+        Each sample undergoes exactly one adaptive weight update.
+        Freezes adaptation if speech_prob > speech_freeze_threshold or adaptation_enabled is False.
+        """
+        primary = np.asarray(primary_hop, dtype=np.float64).ravel()
+        reference = np.asarray(reference_hop, dtype=np.float64).ravel()
+
+        N = min(primary.shape[0], reference.shape[0])
+        error_hop = np.empty(N, dtype=np.float32)
+        estimated_noise_hop = np.empty(N, dtype=np.float32)
+
+        freeze = (not self.adaptation_enabled) or (speech_prob > self.speech_freeze_threshold)
+
+        for i in range(N):
+            p = float(primary[i])
+            r = float(reference[i])
+
+            if not math.isfinite(p) or not math.isfinite(r):
+                error_hop[i] = np.float32(p)
+                estimated_noise_hop[i] = 0.0
+                continue
+
+            # Update circular reference buffer
+            self._ref_buffer[self._buf_idx] = r
+            self._buf_idx = (self._buf_idx + 1) % self.filter_length
+
+            # Construct reference vector x (newest first)
+            idx_arr = (self._buf_idx - 1 - np.arange(self.filter_length)) % self.filter_length
+            x_vec = self._ref_buffer[idx_arr]
+
+            # Filter output: estimated noise
+            estimated_noise = float(np.dot(self._weights, x_vec))
+            error = p - estimated_noise
+
+            # Normalized power of reference vector
+            ref_power = float(np.dot(x_vec, x_vec)) + self.epsilon
+
+            # Impulsive detection
+            is_impulsive = False
+            if self.impulsive_gate:
+                alpha = 0.01
+                self._running_power = (1 - alpha) * self._running_power + alpha * (r ** 2)
+                local_rms = math.sqrt(self._running_power + 1e-12)
+                if abs(r) > self.impulsive_threshold * local_rms:
+                    is_impulsive = True
+                    self._n_impulsive_gates += 1
+
+            # Weight update (skip if adaptation is frozen or sample is impulsive)
+            if not freeze and not is_impulsive:
+                update = (self.step_size * error / ref_power) * x_vec
+                self._weights = self.leakage * self._weights + update
+
+                # Divergence safeguard: bound weight vector norm
+                w_norm = float(np.linalg.norm(self._weights))
+                if w_norm > self.max_weight_norm:
+                    self._weights *= (self.max_weight_norm / w_norm)
+
+            self._n_samples_processed += 1
+            error_hop[i] = np.float32(error)
+            estimated_noise_hop[i] = np.float32(estimated_noise)
+
+        return error_hop, estimated_noise_hop
+
     @property
     def weights(self) -> np.ndarray:
         """Return a copy of current filter weights."""
@@ -350,14 +428,18 @@ class AdaptiveNLMSController:
     def __init__(self) -> None:
         self._current_class: int = NOISE_CLASS_STATIONARY
         self._filter = create_nlms_for_noise_class(NOISE_CLASS_STATIONARY)
+        self._class_switch_count: int = 0
+        self._last_primary_rms: float = 0.0
+        self._last_reference_rms: float = 0.0
+        self._last_output_rms: float = 0.0
+        self._last_correlation: float = 0.0
 
     def update_noise_class(self, noise_class: int) -> None:
         """
         Update the active noise class and reconfigure the NLMS filter.
 
-        NOTE: This preserves the current weight state — the filter does NOT
-        reset. This allows smooth adaptation as noise class transitions.
-        Only step size, leakage, and impulsive gate are updated.
+        NOTE: Preserves filter weights and reference buffer history.
+        Does NOT reset internal delay buffers merely because of a class flip.
 
         Parameters
         ----------
@@ -365,27 +447,51 @@ class AdaptiveNLMSController:
             New noise class from AI classifier (0, 1, or 2).
         """
         if noise_class not in _DEFAULT_CONFIGS:
-            return  # ignore invalid class
+            return
 
         if noise_class == self._current_class:
-            return  # no change
+            return
 
-        old_weights = self._filter.weights
         cfg = _DEFAULT_CONFIGS[noise_class]
-        new_filter = NLMSFilter(
-            filter_length=cfg["filter_length"],
-            step_size=cfg["step_size"],
-            leakage=cfg["leakage"],
-            epsilon=cfg["epsilon"],
-            impulsive_gate=cfg["impulsive_gate"],
-            impulsive_threshold=cfg["impulsive_threshold"],
-        )
-        # Transfer as many weights as possible to preserve convergence
-        min_len = min(len(old_weights), cfg["filter_length"])
-        new_filter._weights[:min_len] = old_weights[:min_len]
 
-        self._filter = new_filter
+        # If filter length is the same, simply update the hyper-parameters in-place!
+        if cfg["filter_length"] == self._filter.filter_length:
+            self._filter.step_size = cfg["step_size"]
+            self._filter.leakage = cfg["leakage"]
+            self._filter.epsilon = cfg["epsilon"]
+            self._filter.impulsive_gate = cfg["impulsive_gate"]
+            self._filter.impulsive_threshold = cfg["impulsive_threshold"]
+        else:
+            old_weights = self._filter.weights
+            old_ref = self._filter._ref_buffer
+            old_idx = self._filter._buf_idx
+            old_power = self._filter._running_power
+            old_n_samples = self._filter._n_samples_processed
+
+            new_filter = NLMSFilter(
+                filter_length=cfg["filter_length"],
+                step_size=cfg["step_size"],
+                leakage=cfg["leakage"],
+                epsilon=cfg["epsilon"],
+                impulsive_gate=cfg["impulsive_gate"],
+                impulsive_threshold=cfg["impulsive_threshold"],
+            )
+            # Transfer weights
+            min_w_len = min(len(old_weights), cfg["filter_length"])
+            new_filter._weights[:min_w_len] = old_weights[:min_w_len]
+
+            # Transfer reference buffer history (unroll chronological order)
+            unrolled_ref = np.roll(old_ref, -old_idx)
+            copy_r_len = min(len(unrolled_ref), cfg["filter_length"])
+            new_filter._ref_buffer[:copy_r_len] = unrolled_ref[-copy_r_len:]
+            new_filter._buf_idx = copy_r_len % cfg["filter_length"]
+            new_filter._running_power = old_power
+            new_filter._n_samples_processed = old_n_samples
+
+            self._filter = new_filter
+
         self._current_class = noise_class
+        self._class_switch_count += 1
 
     def process_block(
         self,
@@ -395,17 +501,78 @@ class AdaptiveNLMSController:
         """Process a block through the current NLMS configuration."""
         return self._filter.process_block(primary, reference)
 
+    def process_hop(
+        self,
+        primary_hop: np.ndarray,
+        reference_hop: np.ndarray,
+        speech_prob: float = 0.0,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Process an audio hop with persistent FIR history, speech freezing, and diagnostics."""
+        p_rms = float(np.sqrt(np.mean(primary_hop.astype(np.float64) ** 2) + 1e-12))
+        r_rms = float(np.sqrt(np.mean(reference_hop.astype(np.float64) ** 2) + 1e-12))
+        self._last_primary_rms = p_rms
+        self._last_reference_rms = r_rms
+
+        if p_rms > 1e-6 and r_rms > 1e-6:
+            min_l = min(len(primary_hop), len(reference_hop))
+            corr = float(np.mean(primary_hop[:min_l] * reference_hop[:min_l]) / (p_rms * r_rms))
+            self._last_correlation = float(np.clip(corr, -1.0, 1.0))
+        else:
+            self._last_correlation = 0.0
+
+        error_hop, est_noise = self._filter.process_hop(primary_hop, reference_hop, speech_prob=speech_prob)
+        self._last_output_rms = float(np.sqrt(np.mean(error_hop.astype(np.float64) ** 2) + 1e-12))
+        return error_hop, est_noise
+
     def reset(self) -> None:
         """Reset the current NLMS filter state."""
         self._filter.reset()
+        self._class_switch_count = 0
+        self._last_primary_rms = 0.0
+        self._last_reference_rms = 0.0
+        self._last_output_rms = 0.0
+        self._last_correlation = 0.0
+
+    @property
+    def step_size(self) -> float:
+        return self._filter.step_size
+
+    @step_size.setter
+    def step_size(self, val: float) -> None:
+        self._filter.step_size = float(val)
+
+    @property
+    def adaptation_enabled(self) -> bool:
+        return self._filter.adaptation_enabled
+
+    @adaptation_enabled.setter
+    def adaptation_enabled(self, val: bool) -> None:
+        self._filter.adaptation_enabled = bool(val)
+
+    @property
+    def speech_freeze_threshold(self) -> float:
+        return self._filter.speech_freeze_threshold
+
+    @speech_freeze_threshold.setter
+    def speech_freeze_threshold(self, val: float) -> None:
+        self._filter.speech_freeze_threshold = float(val)
 
     @property
     def current_noise_class(self) -> int:
         return self._current_class
 
     @property
+    def class_switch_count(self) -> int:
+        return self._class_switch_count
+
+    @property
     def diagnostics(self) -> dict:
         return {
             "noise_class": self._current_class,
+            "class_switch_count": self._class_switch_count,
+            "primary_rms": self._last_primary_rms,
+            "reference_rms": self._last_reference_rms,
+            "m1_m2_correlation": self._last_correlation,
+            "nlms_output_rms": self._last_output_rms,
             **self._filter.diagnostics,
         }

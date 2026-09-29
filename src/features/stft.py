@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+from scipy.signal import get_window as scipy_get_window
 from scipy.signal import istft as scipy_istft
 from scipy.signal import stft as scipy_stft
 
@@ -96,6 +97,49 @@ class STFTExtractor:
 
         return stft_matrix
 
+    def transform_frame(self, frame: np.ndarray) -> np.ndarray:
+        """
+        Compute complex STFT for a single analysis frame.
+        Mathematically and numerically identical to scipy.signal.stft(..., scaling='spectrum').
+
+        Parameters
+        ----------
+        frame : np.ndarray
+            1-D audio frame of length win_length (512 samples).
+
+        Returns
+        -------
+        np.ndarray of shape (frequency_bins,), complex64.
+        """
+        if not isinstance(frame, np.ndarray):
+            frame = np.asarray(frame, dtype=np.float32)
+        if frame.ndim != 1 or len(frame) != self.win_length:
+            raise ValueError(
+                f"frame must be 1-D of length {self.win_length}, got shape {frame.shape}"
+            )
+        win = scipy_get_window(self.window, self.win_length).astype(np.float32)
+        scale = 1.0 / win.sum()
+        spec = np.fft.rfft(frame.astype(np.float32) * win, n=self.n_fft) * scale
+        return spec.astype(np.complex64)
+
+    def inverse_frame(self, spec: np.ndarray) -> np.ndarray:
+        """
+        Compute inverse FFT scaled for overlap-add synthesis,
+        matching scipy.signal.istft(..., scaling='spectrum').
+
+        Parameters
+        ----------
+        spec : np.ndarray
+            1-D complex spectrum of shape (frequency_bins,).
+
+        Returns
+        -------
+        np.ndarray of shape (win_length,), float32.
+        """
+        win = scipy_get_window(self.window, self.win_length).astype(np.float32)
+        time_frame = np.fft.irfft(spec, n=self.n_fft)[:self.win_length] * win.sum()
+        return (time_frame * win).astype(np.float32)
+
     def inverse(
         self,
         stft_matrix: np.ndarray,
@@ -187,6 +231,43 @@ def compute_istft(
         window=window,
     )
     return extractor.inverse(stft_matrix, length=length)
+
+
+def compute_stft_frame(
+    frame: np.ndarray,
+    sample_rate: int = 16000,
+    n_fft: int = 512,
+    win_length: int = 512,
+    hop_length: int = 128,
+    window: str = "hann",
+) -> np.ndarray:
+    """Compute single-frame STFT identical to scipy.signal.stft."""
+    extractor = STFTExtractor(
+        sample_rate=sample_rate,
+        n_fft=n_fft,
+        win_length=win_length,
+        hop_length=hop_length,
+        window=window,
+    )
+    return extractor.transform_frame(frame)
+
+
+
+def transform_frame(frame: np.ndarray, window: np.ndarray = None, n_fft: int = 512) -> np.ndarray:
+    """Compute single-frame STFT identical to scipy.signal.stft with 1.0/sum(window) scaling."""
+    if window is None:
+        window = scipy_get_window("hann", n_fft, fftbins=True)
+    win_scale = 1.0 / float(np.sum(window))
+    return np.fft.rfft(frame * window, n=n_fft) * win_scale
+
+
+def inverse_frame(spec: np.ndarray, window: np.ndarray = None, n_fft: int = 512) -> np.ndarray:
+    """Compute single-frame inverse FFT unscaled by sum(window)."""
+    if window is None:
+        window = scipy_get_window("hann", n_fft, fftbins=True)
+    win_sum = float(np.sum(window))
+    return np.fft.irfft(spec * win_sum, n=n_fft)[:n_fft]
+
 
 
 def get_magnitude(stft_matrix: np.ndarray) -> np.ndarray:

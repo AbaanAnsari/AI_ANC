@@ -79,6 +79,7 @@ class SafetyLimiter:
         epsilon: float = 1e-8,
         hard_clip: bool = True,
         hard_clip_level: float = 0.9999,
+        enabled: bool = True,
     ) -> None:
         if threshold_db > 0:
             raise ValueError(f"threshold_db must be <= 0, got {threshold_db}")
@@ -94,6 +95,7 @@ class SafetyLimiter:
         self.epsilon = float(epsilon)
         self.hard_clip = bool(hard_clip)
         self.hard_clip_level = float(hard_clip_level)
+        self.enabled = bool(enabled)
 
         # Convert time constants to per-sample coefficients
         # alpha = exp(-1 / (time_constant_samples))
@@ -112,17 +114,7 @@ class SafetyLimiter:
     def process(self, signal: np.ndarray) -> np.ndarray:
         """
         Apply the safety limiter to a signal block.
-
-        Parameters
-        ----------
-        signal : np.ndarray
-            Input audio samples, 1-D float32 or float64.
-
-        Returns
-        -------
-        np.ndarray
-            Limited output, same shape as input, dtype float32.
-            Guaranteed finite, guaranteed within [-hard_clip_level, +hard_clip_level].
+        If enabled is False (evaluation mode), bypasses compression while maintaining finite safety.
         """
         signal = np.asarray(signal, dtype=np.float64).ravel()
 
@@ -132,6 +124,10 @@ class SafetyLimiter:
             self._nan_inf_count += int(np.sum(non_finite_mask))
             signal = signal.copy()
             signal[non_finite_mask] = 0.0
+
+        if not self.enabled:
+            self._n_samples_processed += len(signal)
+            return signal.astype(np.float32)
 
         N = len(signal)
         output = np.empty(N, dtype=np.float64)

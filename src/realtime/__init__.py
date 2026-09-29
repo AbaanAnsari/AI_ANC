@@ -7,6 +7,14 @@ from src.realtime.ring_buffer import RingBuffer
 from src.realtime.audio_input import AudioInputStream
 from src.realtime.audio_output import AudioOutputStream
 from src.realtime.device_manager import AudioDeviceManager, AudioDeviceInfo
+from src.realtime.constants import (
+    SAMPLE_RATE,
+    BLOCK_SIZE,
+    BLOCK_DURATION_MS,
+    HOP_SIZE,
+    N_FFT,
+    AUDIO_CONFIG_INDICATOR,
+)
 
 
 def __getattr__(name: str):
@@ -31,5 +39,11 @@ __all__ = [
     "LiveTelemetry",
     "RealtimeEngine",
     "RingBuffer",
+    "SAMPLE_RATE",
+    "BLOCK_SIZE",
+    "BLOCK_DURATION_MS",
+    "HOP_SIZE",
+    "N_FFT",
+    "AUDIO_CONFIG_INDICATOR",
 ]
 

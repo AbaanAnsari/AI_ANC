@@ -48,6 +48,14 @@ except ImportError:
     HAS_SOUNDFILE = False
 
 from simulator.backend.state import state, SimulatorConfig
+from src.realtime.constants import (
+    SAMPLE_RATE,
+    BLOCK_SIZE,
+    BLOCK_DURATION_MS,
+    HOP_SIZE,
+    N_FFT,
+    AUDIO_CONFIG_INDICATOR,
+)
 from src.realtime.live_audio_engine import LiveAudioEngine
 
 FRONTEND_DIR = PROJECT_ROOT / "simulator" / "frontend"
@@ -66,9 +74,15 @@ if HAS_FASTAPI:
         output_device_id: Optional[int] = None
         primary_channel: int = Field(default=0, ge=0)
         ref_channel: int = Field(default=1, ge=-1)
-        sample_rate: int = Field(default=16000)
-        block_size: int = Field(default=256, ge=64, le=2048)
+        sample_rate: int = Field(default=SAMPLE_RATE)
+        block_size: int = Field(default=BLOCK_SIZE)
         master_gain: float = Field(default=0.5, ge=0.0, le=1.0)
+
+        @field_validator("block_size")
+        def validate_block_size(cls, v: int) -> int:
+            if v != BLOCK_SIZE:
+                logger.info("Enforcing immutable audio block size %d samples", BLOCK_SIZE)
+            return BLOCK_SIZE
 
     class StreamGainRequest(BaseModel):
         gain: float = Field(..., ge=0.0, le=1.0)
@@ -151,7 +165,7 @@ async def refresh_devices() -> dict:
 
 
 async def start_stream(req: Optional[StreamStartRequest] = None):
-    """Open physical audio streams and begin processing."""
+    """Open physical audio streams and begin processing with immutable 256-sample block."""
     if req is None:
         req = StreamStartRequest()
 
@@ -160,8 +174,8 @@ async def start_stream(req: Optional[StreamStartRequest] = None):
         output_device_id=req.output_device_id,
         primary_channel=req.primary_channel,
         ref_channel=req.ref_channel,
-        sample_rate=req.sample_rate,
-        block_size=req.block_size,
+        sample_rate=SAMPLE_RATE,
+        block_size=BLOCK_SIZE,
         master_gain=req.master_gain,
     )
     if not success:
@@ -387,6 +401,17 @@ def create_app() -> Any:
             "model_loaded": state.is_model_loaded,
         }
 
+    @app.get("/config/audio")
+    async def audio_config_endpoint():
+        return {
+            "sample_rate": SAMPLE_RATE,
+            "block_size": BLOCK_SIZE,
+            "block_duration_ms": BLOCK_DURATION_MS,
+            "hop_size": HOP_SIZE,
+            "n_fft": N_FFT,
+            "indicator": AUDIO_CONFIG_INDICATOR,
+        }
+
     # 6. Static UI Serving
     if FRONTEND_DIR.exists():
         if (FRONTEND_DIR / "css").exists():
@@ -395,6 +420,10 @@ def create_app() -> Any:
             app.mount("/js", StaticFiles(directory=str(FRONTEND_DIR / "js")), name="js")
 
         @app.get("/")
+        @app.get("/overview")
+        @app.get("/hardware")
+        @app.get("/monitoring")
+        @app.get("/performance")
         async def serve_index():
             return FileResponse(str(FRONTEND_DIR / "index.html"))
 

@@ -80,37 +80,70 @@ class NoiseFloorEstimator:
     Parameters
     ----------
     attack_alpha : float
-        Update rate when energy < current floor (decreasing floor). Default 0.01.
+        Update rate when energy < current floor (decreasing floor). Default 0.05.
     release_alpha : float
-        Update rate when energy > current floor (increasing floor). Default 0.001.
+        Update rate when energy > current floor (increasing floor). Default 0.002.
     initial_floor_db : float
         Initial noise floor estimate in dB. Default -50.0.
     """
 
     def __init__(
         self,
-        attack_alpha: float = 0.01,
-        release_alpha: float = 0.001,
+        attack_alpha: float = 0.08,
+        release_alpha: float = 0.015,
         initial_floor_db: float = -50.0,
+        warmup_frames: int = 15,
     ) -> None:
         self.attack_alpha = float(attack_alpha)
         self.release_alpha = float(release_alpha)
+        self.default_initial_floor_db = float(initial_floor_db)
+        self.warmup_frames = int(warmup_frames)
         self._floor_db: float = float(initial_floor_db)
+        self._initialized: bool = False
+        self._frame_count: int = 0
+        self._speech_dwell: int = 0
 
-    def update(self, energy_db: float) -> float:
+    def update(
+        self,
+        energy_db: float,
+        speech_active: bool = False,
+        force: bool = False,
+    ) -> float:
         """
         Update the noise floor estimate with a new energy observation.
 
         Returns the current noise floor estimate.
         """
-        if energy_db < self._floor_db:
-            # Energy decreasing: floor should track down (slow)
-            alpha = self.attack_alpha
-        else:
-            # Energy increasing above floor: floor slowly creeps up
-            alpha = self.release_alpha
+        self._frame_count += 1
 
-        self._floor_db = (1 - alpha) * self._floor_db + alpha * energy_db
+        if not self._initialized:
+            self._floor_db = min(self.default_initial_floor_db, float(energy_db))
+            self._initialized = True
+            return self._floor_db
+
+        # Warmup phase: lock directly to the lowest observed energy in the initial window
+        if self._frame_count <= self.warmup_frames:
+            self._floor_db = min(self._floor_db, float(energy_db))
+            return self._floor_db
+
+        if energy_db < self._floor_db:
+            # Energy decreasing: floor tracks down rapidly
+            alpha = self.attack_alpha
+            self._speech_dwell = 0
+        else:
+            if speech_active:
+                self._speech_dwell += 1
+                # If speech is latched continuously for > 50 frames (400ms),
+                # increase tracking rate so sustained stationary noise (fan, siren) cannot latch VAD permanently.
+                if self._speech_dwell > 50:
+                    alpha = self.release_alpha * 2.0
+                else:
+                    alpha = self.release_alpha * 0.2
+            else:
+                self._speech_dwell = 0
+                alpha = self.release_alpha if not force else self.attack_alpha
+
+        self._floor_db = (1.0 - alpha) * self._floor_db + alpha * energy_db
         return self._floor_db
 
     @property
@@ -119,6 +152,9 @@ class NoiseFloorEstimator:
 
     def reset(self, initial_floor_db: float = -50.0) -> None:
         self._floor_db = float(initial_floor_db)
+        self._initialized = False
+        self._frame_count = 0
+        self._speech_dwell = 0
 
 
 # ---------------------------------------------------------------------------
@@ -194,11 +230,10 @@ class VoiceActivityDetector:
         # 1. Frame energy
         energy_db = compute_frame_energy(frame, use_log=True)
 
-        # 2. Update noise floor (only update during silence to avoid speech contamination)
-        if not self._speech_active:
-            noise_floor_db = self._noise_floor.update(energy_db)
-        else:
-            noise_floor_db = self._noise_floor.floor_db
+        # 2. Update noise floor
+        # Always update downward if energy < floor.
+        # If speech is active, allow slow upward tracking so sustained continuous noise (fan, siren) cannot latch VAD.
+        noise_floor_db = self._noise_floor.update(energy_db, speech_active=self._speech_active)
 
         # 3. Compute instantaneous SNR
         snr_db = energy_db - noise_floor_db
@@ -210,6 +245,8 @@ class VoiceActivityDetector:
         else:
             # Use lower offset threshold to exit speech state
             raw_speech = snr_db >= self.offset_threshold_db
+
+        raw_prob = 1.0 if raw_speech else 0.0
 
         # 5. Energy history for smoothing
         self._energy_history.append(float(snr_db))
@@ -235,6 +272,8 @@ class VoiceActivityDetector:
         return {
             "speech_active": self._speech_active,
             "speech_probability": smooth_prob,
+            "raw_vad_probability": raw_prob,
+            "smoothed_vad_probability": smooth_prob,
             "frame_energy_db": energy_db,
             "noise_floor_db": noise_floor_db,
             "snr_estimate_db": snr_db,

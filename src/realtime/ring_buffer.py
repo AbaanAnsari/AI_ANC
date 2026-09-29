@@ -161,6 +161,29 @@ class RingBuffer:
 
         return output
 
+    def discard(self, n_samples: int) -> int:
+        """
+        Discard up to n_samples from the buffer without copying.
+
+        Parameters
+        ----------
+        n_samples : int
+            Number of samples to discard.
+
+        Returns
+        -------
+        int
+            Number of samples actually discarded.
+        """
+        with self._lock:
+            n_discard = min(int(n_samples), self._available)
+            if n_discard <= 0:
+                return 0
+
+            self._read_idx = (self._read_idx + n_discard) % self._capacity
+            self._available -= n_discard
+            return n_discard
+
     def reset(self) -> None:
         """Clear all buffer contents and reset to initial state."""
         with self._lock:
@@ -168,3 +191,4 @@ class RingBuffer:
             self._write_idx = 0
             self._read_idx = 0
             self._available = 0
+

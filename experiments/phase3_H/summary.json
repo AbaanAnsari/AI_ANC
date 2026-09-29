@@ -1,0 +1,29 @@
+{
+  "experiment_id": "H",
+  "experiment_name": "Composite + Warm Start (30 Epochs)",
+  "description": "30-epoch fine-tuning of Step 6 checkpoint with Phase 3 composite loss.",
+  "loss_type": "phase3",
+  "epochs": 30,
+  "best_epoch": 30,
+  "best_val_loss": -2.5050732906048117,
+  "best_val_snr_improvement": 11.12817508807228,
+  "total_time_s": 812.65,
+  "trainable_params": 70789,
+  "final_metrics": {
+    "epoch": 30,
+    "train_total_loss": -2.7045857219372764,
+    "train_enhancement_loss": -2.762114708706484,
+    "train_classification_loss": 0.5752899975089704,
+    "val_total_loss": -2.5050732906048117,
+    "val_enhancement_loss": -2.5845300601078915,
+    "val_classification_loss": 0.7945675070469196,
+    "val_samples_evaluated": 30,
+    "val_snr_enhanced_mean": 11.12817508807228,
+    "val_snr_improvement": 11.12817508807228,
+    "val_stoi_enhanced_mean": 0.8747053996707173,
+    "val_pesq_enhanced_mean": 1.6472494641939799,
+    "learning_rate": 3.75e-05,
+    "epoch_time_s": 27.56,
+    "is_best": true
+  }
+}

@@ -68,9 +68,9 @@ SEGMENT_SAMPLES = 16000          # 1-second segments
 DEFAULT_SNR_SET = [-5, 0, 5, 10, 15, 20]
 SEED = 20260925
 
-BEST_CHECKPOINT = (
-    PROJECT_ROOT / "experiments" / "phase2_step6_targeted_crm_full" / "best_checkpoint.pt"
-)
+PHASE3_CHECKPOINT = PROJECT_ROOT / "experiments" / "phase3_H" / "best_checkpoint.pt"
+STEP6_CHECKPOINT = PROJECT_ROOT / "experiments" / "phase2_step6_targeted_crm_full" / "best_checkpoint.pt"
+BEST_CHECKPOINT = PHASE3_CHECKPOINT if PHASE3_CHECKPOINT.exists() else STEP6_CHECKPOINT
 TEST_MANIFEST = PROJECT_ROOT / "data" / "manifests" / "test_manifest.jsonl"
 DATASET_ROOT = PROJECT_ROOT / "data" / "raw" / "dataset"
 

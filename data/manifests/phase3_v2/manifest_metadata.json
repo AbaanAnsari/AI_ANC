@@ -1,0 +1,77 @@
+{
+  "dataset_version": "phase3_v2",
+  "seed": 20260929,
+  "clean_speaker_splits": {
+    "train": [
+      "1098",
+      "6081",
+      "mixed",
+      "625",
+      "nonstationary_snr",
+      "7800",
+      "5393",
+      "nonstationary",
+      "3436",
+      "87",
+      "mixed_snr",
+      "impulsive",
+      "19",
+      "impulsive_snr"
+    ],
+    "validation": [
+      "445",
+      "322",
+      "stationary_snr",
+      "1363",
+      "3235"
+    ],
+    "test": [
+      "stationary",
+      "4362"
+    ]
+  },
+  "counts": {
+    "train": {
+      "total_records": 2644,
+      "clean_records": 912,
+      "noise_records": 1732,
+      "speakers": [
+        "1098",
+        "6081",
+        "mixed",
+        "625",
+        "nonstationary_snr",
+        "7800",
+        "5393",
+        "nonstationary",
+        "3436",
+        "87",
+        "mixed_snr",
+        "impulsive",
+        "19",
+        "impulsive_snr"
+      ]
+    },
+    "validation": {
+      "total_records": 577,
+      "clean_records": 206,
+      "noise_records": 371,
+      "speakers": [
+        "445",
+        "322",
+        "stationary_snr",
+        "1363",
+        "3235"
+      ]
+    },
+    "test": {
+      "total_records": 599,
+      "clean_records": 227,
+      "noise_records": 372,
+      "speakers": [
+        "stationary",
+        "4362"
+      ]
+    }
+  }
+}

@@ -28,35 +28,35 @@
   },
   "test_parameters": {
     "target_duration_s": 60.0,
-    "actual_wall_time_s": 60.82,
+    "actual_wall_time_s": 60.91,
     "sample_rate": 16000,
     "block_size": 256
   },
   "performance_metrics": {
     "total_audio_duration_processed_s": 59.79,
-    "total_processing_time_s": 34.81,
-    "real_time_factor": 0.582,
+    "total_processing_time_s": 26.04,
+    "real_time_factor": 0.435,
     "real_time_capable": true,
-    "mean_processing_time_ms": 4.58,
-    "p95_processing_time_ms": 6.17,
-    "p99_processing_time_ms": 9.82,
-    "max_processing_time_ms": 10.19,
+    "mean_processing_time_ms": 6.71,
+    "p95_processing_time_ms": 9.24,
+    "p99_processing_time_ms": 11.0,
+    "max_processing_time_ms": 13.43,
     "audio_hop_duration_ms": 8.0,
-    "mean_cpu_percent": 74.96,
-    "max_cpu_percent": 81.5
+    "mean_cpu_percent": 77.14,
+    "max_cpu_percent": 90.9
   },
   "buffer_health": {
     "input_overflows": 0,
-    "output_underflows": 20,
+    "output_underflows": 21,
     "dropped_blocks": 0,
     "queue_depth_samples_at_exit": 256
   },
   "signal_stats": {
-    "input_rms_m1": 1.5495374100282788e-05,
-    "input_rms_m2": 1.4016092791280244e-05,
-    "output_rms": 8.286144293379039e-06,
+    "input_rms_m1": 4.3577801989158615e-05,
+    "input_rms_m2": 4.5657001464860514e-05,
+    "output_rms": 1.4212403584679123e-05,
     "last_noise_class": "Stationary",
-    "confidence": 0.42430558800697327,
+    "confidence": 0.8080877065658569,
     "clipping_events": 0
   }
 }

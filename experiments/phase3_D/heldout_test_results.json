@@ -1,0 +1,43 @@
+{
+  "checkpoint": "D:\\SIH\\AI_ANC\\experiments\\phase3_D\\best_checkpoint.pt",
+  "total_samples": 227,
+  "mean_input_snr_db": 6.94,
+  "mean_output_snr_db": 11.25,
+  "mean_delta_snr_db": 4.31,
+  "std_delta_snr_db": 3.45,
+  "ci_95_delta_snr_db": 0.45,
+  "per_class_delta_snr": {
+    "stationary": 3.77,
+    "non-stationary": 3.91,
+    "impulsive": 5.05
+  },
+  "per_class_counts": {
+    "stationary": 66,
+    "non-stationary": 73,
+    "impulsive": 88
+  },
+  "per_snr_bin_delta_snr": {
+    "low (<0)": 7.72,
+    "mid (0-10)": 5.11,
+    "high (>10)": 1.56
+  },
+  "classification_accuracy": 40.09,
+  "classification_macro_f1": 0.399,
+  "confusion_matrix": [
+    [
+      28,
+      22,
+      16
+    ],
+    [
+      26,
+      26,
+      21
+    ],
+    [
+      24,
+      27,
+      37
+    ]
+  ]
+}

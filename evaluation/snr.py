@@ -9,7 +9,11 @@ from __future__ import annotations
 import numpy as np
 
 
-def compute_snr(clean: np.ndarray, noisy_or_enhanced: np.ndarray) -> float:
+def compute_snr(
+    clean: np.ndarray,
+    noisy_or_enhanced: np.ndarray,
+    zero_residual_threshold: float = 1e-10,
+) -> float:
     """
     Compute Signal-to-Noise Ratio in dB.
 
@@ -18,14 +22,19 @@ def compute_snr(clean: np.ndarray, noisy_or_enhanced: np.ndarray) -> float:
     Parameters
     ----------
     clean : np.ndarray
-        Reference clean speech waveform (1-D float32).
+        Reference clean speech waveform (1-D float32 or float64).
     noisy_or_enhanced : np.ndarray
         Degraded or processed signal of the same shape.
+    zero_residual_threshold : float
+        Relative residual power threshold below which the residual is
+        treated as numerical zero / machine precision limit, returning +inf.
+        Default 1e-10 (-100 dB relative residual).
 
     Returns
     -------
     float
-        SNR in dB. Returns -inf if signal power is zero; +inf if residual is zero.
+        SNR in dB. Returns -inf if signal power is zero; +inf if residual is zero
+        or below numerical floating point precision limits.
     """
     clean = np.asarray(clean, dtype=np.float64)
     sig = np.asarray(noisy_or_enhanced, dtype=np.float64)
@@ -36,15 +45,21 @@ def compute_snr(clean: np.ndarray, noisy_or_enhanced: np.ndarray) -> float:
         clean = clean[:min_len]
         sig = sig[:min_len]
 
-    signal_power = np.mean(clean ** 2)
-    if signal_power == 0.0:
+    signal_power = float(np.mean(clean ** 2))
+    if signal_power <= 0.0:
         return float("-inf")
 
-    residual_power = np.mean((clean - sig) ** 2)
-    if residual_power == 0.0:
+    residual_power = float(np.mean((clean - sig) ** 2))
+    if residual_power <= 0.0:
+        return float("inf")
+
+    # Guard against float32 round-off artifacts masquerading as finite ~120+ dB SNR
+    rel_residual = residual_power / (signal_power + 1e-15)
+    if rel_residual < zero_residual_threshold:
         return float("inf")
 
     return float(10.0 * np.log10(signal_power / residual_power))
+
 
 
 def compute_snr_improvement(

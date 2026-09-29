@@ -137,6 +137,10 @@ class Trainer:
         """
         self.model.train()
 
+        # Propagate current epoch to dataset for deterministic epoch-varying mixture generation
+        if hasattr(self.train_loader.dataset, "set_epoch"):
+            self.train_loader.dataset.set_epoch(epoch)
+
         total_loss_sum = 0.0
         enh_loss_sum = 0.0
         cls_loss_sum = 0.0
@@ -221,6 +225,10 @@ class Trainer:
             val_classification_loss
         """
         self.model.eval()
+
+        # Validation data must remain deterministic and stable across all epochs
+        if hasattr(self.val_loader.dataset, "set_epoch"):
+            self.val_loader.dataset.set_epoch(0)
 
         total_loss_sum = 0.0
         enh_loss_sum = 0.0

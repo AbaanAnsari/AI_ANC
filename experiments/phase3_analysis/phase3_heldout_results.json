@@ -1,0 +1,65 @@
+{
+  "step6_baseline": {
+    "experiment": "Step 6 Baseline",
+    "checkpoint": "experiments\\phase2_step6_targeted_crm_full\\best_checkpoint.pt",
+    "best_epoch": 29,
+    "test_samples": 202,
+    "classification_accuracy_pct": 76.73,
+    "per_class_accuracy": {
+      "0": 84.91,
+      "1": 69.23,
+      "2": 78.87
+    },
+    "input_snr_db": 7.97,
+    "enhanced_snr_db": 7.24,
+    "snr_improvement_db": -0.73,
+    "noisy_stoi": 0.78,
+    "enhanced_stoi": 0.763,
+    "stoi_improvement": -0.0169,
+    "noisy_pesq": 1.4964,
+    "enhanced_pesq": 1.7174,
+    "pesq_improvement": 0.221
+  },
+  "phase3_exp_D": {
+    "experiment": "Phase 3 Exp D (Balanced Composite)",
+    "checkpoint": "experiments\\phase3_D\\best_checkpoint.pt",
+    "best_epoch": 26,
+    "test_samples": 202,
+    "classification_accuracy_pct": 44.55,
+    "per_class_accuracy": {
+      "0": 41.94,
+      "1": 48.08,
+      "2": 44.32
+    },
+    "input_snr_db": 7.97,
+    "enhanced_snr_db": 11.82,
+    "snr_improvement_db": 3.85,
+    "noisy_stoi": 0.78,
+    "enhanced_stoi": 0.7959,
+    "stoi_improvement": 0.0159,
+    "noisy_pesq": 1.4964,
+    "enhanced_pesq": 1.6968,
+    "pesq_improvement": 0.2005
+  },
+  "phase3_exp_F": {
+    "experiment": "Phase 3 Exp F (Warm Start)",
+    "checkpoint": "experiments\\phase3_F\\best_checkpoint.pt",
+    "best_epoch": 20,
+    "test_samples": 202,
+    "classification_accuracy_pct": 61.39,
+    "per_class_accuracy": {
+      "0": 63.33,
+      "1": 50.65,
+      "2": 72.31
+    },
+    "input_snr_db": 7.97,
+    "enhanced_snr_db": 11.32,
+    "snr_improvement_db": 3.35,
+    "noisy_stoi": 0.78,
+    "enhanced_stoi": 0.7952,
+    "stoi_improvement": 0.0152,
+    "noisy_pesq": 1.4964,
+    "enhanced_pesq": 1.6662,
+    "pesq_improvement": 0.1698
+  }
+}

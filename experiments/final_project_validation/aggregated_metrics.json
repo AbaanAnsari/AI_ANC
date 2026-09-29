@@ -11,19 +11,19 @@
     "count": 202
   },
   "snr_enhanced": {
-    "mean": 7.9611,
-    "median": 8.4203,
-    "std": 4.5622,
-    "min": -4.1937,
-    "max": 15.9566,
+    "mean": 12.1916,
+    "median": 12.0427,
+    "std": 6.5861,
+    "min": -3.0221,
+    "max": 26.324,
     "count": 202
   },
   "snr_improvement": {
-    "mean": -0.9251,
-    "median": -0.096,
-    "std": 5.3746,
-    "min": -18.1235,
-    "max": 9.4696,
+    "mean": 3.3054,
+    "median": 2.9606,
+    "std": 3.5437,
+    "min": -10.2095,
+    "max": 14.5965,
     "count": 202
   },
   "stoi_noisy": {
@@ -35,19 +35,19 @@
     "count": 202
   },
   "stoi_enhanced": {
-    "mean": 0.7936,
-    "median": 0.8606,
-    "std": 0.1987,
-    "min": -0.0419,
-    "max": 0.9879,
+    "mean": 0.8249,
+    "median": 0.8881,
+    "std": 0.1956,
+    "min": 0.0,
+    "max": 0.9978,
     "count": 202
   },
   "stoi_improvement": {
-    "mean": -0.0192,
-    "median": -0.0158,
-    "std": 0.056,
-    "min": -0.2604,
-    "max": 0.1856,
+    "mean": 0.0121,
+    "median": 0.0008,
+    "std": 0.0508,
+    "min": -0.1488,
+    "max": 0.2743,
     "count": 202
   },
   "pesq_noisy": {
@@ -59,30 +59,30 @@
     "count": 201
   },
   "pesq_enhanced": {
-    "mean": 1.7745,
-    "median": 1.5477,
-    "std": 0.6635,
-    "min": 1.0329,
-    "max": 3.6422,
+    "mean": 1.6997,
+    "median": 1.4596,
+    "std": 0.6383,
+    "min": 1.034,
+    "max": 3.6273,
     "count": 201
   },
   "pesq_improvement": {
-    "mean": 0.2629,
-    "median": 0.2189,
-    "std": 0.412,
-    "min": -2.1004,
-    "max": 1.7748,
+    "mean": 0.1881,
+    "median": 0.1338,
+    "std": 0.2606,
+    "min": -0.3398,
+    "max": 1.7664,
     "count": 201
   },
   "pesq_noisy_failure_count": 1,
   "pesq_enhanced_failure_count": 1,
-  "classification_accuracy": 0.7624,
-  "classification_correct": 154,
+  "classification_accuracy": 0.6931,
+  "classification_correct": 140,
   "classification_total": 202,
   "per_class_accuracy": {
-    "stationary": 0.6974,
-    "non-stationary": 0.7333,
-    "impulsive": 0.8636
+    "stationary": 0.6447,
+    "non-stationary": 0.5167,
+    "impulsive": 0.9091
   },
   "per_class_total": {
     "stationary": 76,
@@ -94,7 +94,7 @@
   "pesq_mode": "wb",
   "pesq_sample_rate": 16000,
   "pesq_resampling": "none (native 16 kHz)",
-  "model_epoch": 29,
-  "checkpoint_path": "D:\\SIH\\AI_ANC\\experiments\\phase2_step6_targeted_crm_full\\best_checkpoint.pt",
-  "evaluation_duration_s": 23.89
+  "model_epoch": 30,
+  "checkpoint_path": "experiments\\phase3_H\\best_checkpoint.pt",
+  "evaluation_duration_s": 35.69
 }

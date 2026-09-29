@@ -16,6 +16,7 @@ import numpy as np
 import sounddevice as sd
 
 from src.realtime.ring_buffer import RingBuffer
+from src.realtime.constants import SAMPLE_RATE, BLOCK_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class AudioOutputStream:
     sample_rate : int
         Sampling rate in Hz. Default 16000.
     block_size : int
-        PortAudio block size in frames. Default 256.
+        PortAudio block size in frames. Fixed to 256.
     output_buffer : RingBuffer
         Ring buffer containing enhanced audio samples ready for playback.
     master_gain : float
@@ -44,9 +45,9 @@ class AudioOutputStream:
         self,
         device_id: int,
         channels: int,
-        sample_rate: int,
-        block_size: int,
-        output_buffer: RingBuffer,
+        sample_rate: int = SAMPLE_RATE,
+        block_size: int = BLOCK_SIZE,
+        output_buffer: RingBuffer = None,
         master_gain: float = 0.5,
     ) -> None:
         self.device_id = device_id
@@ -56,6 +57,10 @@ class AudioOutputStream:
         self._output_buffer = output_buffer
         self.master_gain = max(0.0, min(1.0, float(master_gain)))
         self.is_muted: bool = False
+
+        # Output adapter for hardware with variable/non-256 buffer sizes
+        self._adapter_out = np.empty(0, dtype=np.float32)
+        self._adapter_lock = threading.Lock()
 
         self._stream: Optional[sd.OutputStream] = None
         self._is_running: bool = False
@@ -100,7 +105,7 @@ class AudioOutputStream:
             return self._telemetry_buffer[-n:].copy()
 
     def _callback(self, outdata: np.ndarray, frames: int, time_info: dict, status: sd.CallbackFlags) -> None:
-        """Lightweight non-blocking audio playback callback."""
+        """Lightweight non-blocking audio playback callback enforcing 256-sample block buffering adapter."""
         import time as _time
         now = _time.time()
         self.output_callback_count += 1
@@ -115,17 +120,29 @@ class AudioOutputStream:
         self.output_frames_sent += frames
         self.frames_played = self.output_frames_sent
 
-        # Read available samples from output buffer
-        samples = self._output_buffer.read(frames)
-        n_read = len(samples)
+        # Read samples ensuring internal fixed block consumption
+        if frames == self.block_size:
+            samples = self._output_buffer.read(frames)
+            n_read = len(samples)
+            if n_read < frames:
+                self.underflow_count += 1
+                padded = np.zeros(frames, dtype=np.float32)
+                if n_read > 0:
+                    padded[:n_read] = samples
+                samples = padded
+        else:
+            with self._adapter_lock:
+                while len(self._adapter_out) < frames:
+                    chunk = self._output_buffer.read(self.block_size)
+                    n_read = len(chunk)
+                    if n_read < self.block_size:
+                        self.underflow_count += 1
+                        pad = np.zeros(self.block_size - n_read, dtype=np.float32)
+                        chunk = np.concatenate([chunk, pad]) if n_read > 0 else pad
+                    self._adapter_out = np.concatenate([self._adapter_out, chunk])
 
-        if n_read < frames:
-            self.underflow_count += 1
-            # Pad shortfall with zeros
-            padded = np.zeros(frames, dtype=np.float32)
-            if n_read > 0:
-                padded[:n_read] = samples
-            samples = padded
+                samples = self._adapter_out[:frames]
+                self._adapter_out = self._adapter_out[frames:]
 
         # Apply gain and mute
         if self.is_muted:

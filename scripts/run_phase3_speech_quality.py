@@ -19,6 +19,7 @@ RULES:
   - No modifications to evaluation code
   - All results logged faithfully
 """
+
 from __future__ import annotations
 
 import json
@@ -68,30 +69,32 @@ logger = logging.getLogger("phase3")
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-EXP_BASE       = PROJECT_ROOT / "experiments"
-MANIFEST_DIR   = PROJECT_ROOT / "data" / "manifests"
+EXP_BASE = PROJECT_ROOT / "experiments"
+MANIFEST_DIR = PROJECT_ROOT / "data" / "manifests"
 TRAIN_MANIFEST = MANIFEST_DIR / "train_manifest.jsonl"
-VAL_MANIFEST   = MANIFEST_DIR / "val_manifest.jsonl"
-DATASET_ROOT   = PROJECT_ROOT / "data" / "raw" / "dataset"
+VAL_MANIFEST = MANIFEST_DIR / "val_manifest.jsonl"
+DATASET_ROOT = PROJECT_ROOT / "data" / "raw" / "dataset"
 STEP6_CHECKPOINT = EXP_BASE / "phase2_step6_targeted_crm_full" / "best_checkpoint.pt"
 
 # Training defaults
-SEED         = 123
-BATCH_SIZE   = 16
-LR           = 1e-3
+SEED = 123
+BATCH_SIZE = 16
+LR = 1e-3
 WEIGHT_DECAY = 1e-4
-GRAD_CLIP    = 5.0
-SAMPLE_RATE  = 16000
+GRAD_CLIP = 5.0
+SAMPLE_RATE = 16000
 
 # STOI/PESQ availability
 try:
     from pystoi import stoi as _pystoi_fn
+
     HAS_STOI = True
 except ImportError:
     HAS_STOI = False
 
 try:
     from pesq import pesq as _pesq_fn, PesqError
+
     HAS_PESQ = True
 except ImportError:
     HAS_PESQ = False
@@ -245,6 +248,7 @@ EXPERIMENTS = {
 # Create loss function
 # ---------------------------------------------------------------------------
 
+
 def create_loss_fn(experiment: dict, device: str) -> nn.Module:
     """Create the loss function for the given experiment config."""
     loss_type = experiment["loss_type"]
@@ -280,6 +284,7 @@ def create_loss_fn(experiment: dict, device: str) -> nn.Module:
 # ---------------------------------------------------------------------------
 # Validation with per-sample metrics
 # ---------------------------------------------------------------------------
+
 
 def validate_with_metrics(
     model: nn.Module,
@@ -318,16 +323,24 @@ def validate_with_metrics(
             # Compute loss
             if loss_type == "step6":
                 loss_dict = loss_fn(
-                    enhanced_output, mask, classification_logits,
-                    noisy_features, target_stft, noise_class_label,
+                    enhanced_output,
+                    mask,
+                    classification_logits,
+                    noisy_features,
+                    target_stft,
+                    noise_class_label,
                 )
             else:
                 clean_waveform = batch.get("clean_target")
                 if clean_waveform is not None:
                     clean_waveform = clean_waveform.to(device)
                 loss_dict = loss_fn(
-                    enhanced_output, mask, classification_logits,
-                    noisy_features, target_stft, noise_class_label,
+                    enhanced_output,
+                    mask,
+                    classification_logits,
+                    noisy_features,
+                    target_stft,
+                    noise_class_label,
                     clean_waveform=clean_waveform,
                 )
 
@@ -344,16 +357,24 @@ def validate_with_metrics(
                     if sample_count >= num_metric_samples:
                         break
 
-                    clean_wav = batch["clean_target"][i].cpu().numpy().astype(np.float64)
+                    clean_wav = (
+                        batch["clean_target"][i].cpu().numpy().astype(np.float64)
+                    )
 
                     # Noisy waveform from M1
-                    noisy_wav = batch["m1_waveform"][i].cpu().numpy().astype(np.float64) if "m1_waveform" in batch else None
+                    noisy_wav = (
+                        batch["m1_waveform"][i].cpu().numpy().astype(np.float64)
+                        if "m1_waveform" in batch
+                        else None
+                    )
 
                     # Enhanced waveform via ISTFT
                     enh_real = enhanced_np[i, 0]
                     enh_imag = enhanced_np[i, 1]
                     enh_complex = (enh_real + 1j * enh_imag).astype(np.complex64)
-                    enhanced_wav = compute_istft(enh_complex, length=len(clean_wav)).astype(np.float64)
+                    enhanced_wav = compute_istft(
+                        enh_complex, length=len(clean_wav)
+                    ).astype(np.float64)
 
                     # Align
                     min_len = min(len(clean_wav), len(enhanced_wav))
@@ -369,7 +390,9 @@ def validate_with_metrics(
                         if s_noisy is not None:
                             stoi_noisy_vals.append(s_noisy)
 
-                        p_noisy = _safe_pesq(clean_wav.astype(np.float32), noisy_wav.astype(np.float32))
+                        p_noisy = _safe_pesq(
+                            clean_wav.astype(np.float32), noisy_wav.astype(np.float32)
+                        )
                         if p_noisy is not None:
                             pesq_noisy_vals.append(p_noisy)
 
@@ -380,7 +403,9 @@ def validate_with_metrics(
                     if s_enhanced is not None:
                         stoi_enhanced_vals.append(s_enhanced)
 
-                    p_enhanced = _safe_pesq(clean_wav.astype(np.float32), enhanced_wav.astype(np.float32))
+                    p_enhanced = _safe_pesq(
+                        clean_wav.astype(np.float32), enhanced_wav.astype(np.float32)
+                    )
                     if p_enhanced is not None:
                         pesq_enhanced_vals.append(p_enhanced)
 
@@ -419,6 +444,7 @@ def validate_with_metrics(
 # Single experiment runner
 # ---------------------------------------------------------------------------
 
+
 def run_experiment(
     exp_id: str,
     experiment: dict,
@@ -431,7 +457,12 @@ def run_experiment(
     logger.info("=" * 70)
     logger.info("PHASE 3 EXPERIMENT %s: %s", exp_id, experiment["name"])
     logger.info("  Description: %s", experiment["description"])
-    logger.info("  Epochs: %d | LR: %s | Loss: %s", experiment["epochs"], experiment["lr"], experiment["loss_type"])
+    logger.info(
+        "  Epochs: %d | LR: %s | Loss: %s",
+        experiment["epochs"],
+        experiment["lr"],
+        experiment["loss_type"],
+    )
     logger.info("  Mask clamp: %s", experiment.get("mask_clamp", (-1.0, 1.0)))
     logger.info("  Warm start: %s", experiment.get("warm_start", "None (fresh)"))
     logger.info("=" * 70)
@@ -450,21 +481,34 @@ def run_experiment(
         ckpt_path = Path(experiment["warm_start"])
         if ckpt_path.exists():
             ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-            model.load_state_dict(ckpt["model_state_dict"])
-            logger.info("Loaded warm-start checkpoint: %s (epoch %s)", ckpt_path.name, ckpt.get("epoch", "?"))
+            model.load_state_dict(ckpt["model_state_dict"], strict=True)
+            logger.info(
+                "Loaded warm-start checkpoint: %s (epoch %s)",
+                ckpt_path.name,
+                ckpt.get("epoch", "?"),
+            )
         else:
-            logger.warning("Warm-start checkpoint not found: %s — training from scratch!", ckpt_path)
+            logger.warning(
+                "Warm-start checkpoint not found: %s — training from scratch!",
+                ckpt_path,
+            )
 
     model.to(device)
 
     # Create data loaders
     train_loader = create_dataloader(
-        TRAIN_MANIFEST, DATASET_ROOT,
-        batch_size=BATCH_SIZE, shuffle=True, seed=SEED,
+        TRAIN_MANIFEST,
+        DATASET_ROOT,
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+        seed=SEED,
     )
     val_loader = create_dataloader(
-        VAL_MANIFEST, DATASET_ROOT,
-        batch_size=BATCH_SIZE, shuffle=False, seed=SEED,
+        VAL_MANIFEST,
+        DATASET_ROOT,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        seed=SEED,
     )
 
     # Create loss
@@ -477,7 +521,11 @@ def run_experiment(
         weight_decay=WEIGHT_DECAY,
     )
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=3, min_lr=1e-6,
+        optimizer,
+        mode="min",
+        factor=0.5,
+        patience=3,
+        min_lr=1e-6,
     )
 
     # Training loop
@@ -509,23 +557,33 @@ def run_experiment(
 
             if loss_type == "step6":
                 loss_dict = loss_fn(
-                    enhanced_output, mask, classification_logits,
-                    noisy_features, target_stft, noise_class_label,
+                    enhanced_output,
+                    mask,
+                    classification_logits,
+                    noisy_features,
+                    target_stft,
+                    noise_class_label,
                 )
             else:
                 clean_waveform = batch.get("clean_target")
                 if clean_waveform is not None:
                     clean_waveform = clean_waveform.to(device)
                 loss_dict = loss_fn(
-                    enhanced_output, mask, classification_logits,
-                    noisy_features, target_stft, noise_class_label,
+                    enhanced_output,
+                    mask,
+                    classification_logits,
+                    noisy_features,
+                    target_stft,
+                    noise_class_label,
                     clean_waveform=clean_waveform,
                 )
 
             total_loss = loss_dict["total_loss"]
 
             if not torch.isfinite(total_loss):
-                logger.error("NaN/Inf loss at epoch %d batch %d — skipping", epoch, batch_idx)
+                logger.error(
+                    "NaN/Inf loss at epoch %d batch %d — skipping", epoch, batch_idx
+                )
                 continue
 
             total_loss.backward()
@@ -542,7 +600,9 @@ def run_experiment(
             continue
 
         # Validation
-        val_metrics = validate_with_metrics(model, val_loader, loss_fn, device, loss_type)
+        val_metrics = validate_with_metrics(
+            model, val_loader, loss_fn, device, loss_type
+        )
         val_loss = val_metrics.get("val_total_loss", float("inf"))
         scheduler.step(val_loss)
 
@@ -551,28 +611,34 @@ def run_experiment(
         if is_best:
             best_val_loss = val_loss
             best_epoch = epoch
-            torch.save({
-                "epoch": epoch,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "scheduler_state_dict": scheduler.state_dict(),
-                "best_val_loss": best_val_loss,
-                "experiment_id": exp_id,
-                "experiment_name": experiment["name"],
-            }, exp_dir / "best_checkpoint.pt")
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "scheduler_state_dict": scheduler.state_dict(),
+                    "best_val_loss": best_val_loss,
+                    "experiment_id": exp_id,
+                    "experiment_name": experiment["name"],
+                },
+                exp_dir / "best_checkpoint.pt",
+            )
 
         val_snr_imp = val_metrics.get("val_snr_improvement", float("-inf"))
         if val_snr_imp > best_val_snr_imp:
             best_val_snr_imp = val_snr_imp
 
         # Save last checkpoint
-        torch.save({
-            "epoch": epoch,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "scheduler_state_dict": scheduler.state_dict(),
-            "best_val_loss": best_val_loss,
-        }, exp_dir / "last_checkpoint.pt")
+        torch.save(
+            {
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict(),
+                "best_val_loss": best_val_loss,
+            },
+            exp_dir / "last_checkpoint.pt",
+        )
 
         epoch_time = time.perf_counter() - epoch_start
         lr = optimizer.param_groups[0]["lr"]
@@ -590,16 +656,33 @@ def run_experiment(
         history.append(epoch_record)
 
         # Log
-        snr_str = f"SNR_imp={val_metrics.get('val_snr_improvement', 'N/A'):.2f}" if isinstance(val_metrics.get('val_snr_improvement'), (int, float)) else "SNR_imp=N/A"
-        stoi_str = f"STOI={val_metrics.get('val_stoi_enhanced_mean', 'N/A'):.4f}" if isinstance(val_metrics.get('val_stoi_enhanced_mean'), (int, float)) else "STOI=N/A"
-        pesq_str = f"PESQ={val_metrics.get('val_pesq_enhanced_mean', 'N/A'):.4f}" if isinstance(val_metrics.get('val_pesq_enhanced_mean'), (int, float)) else "PESQ=N/A"
+        snr_str = (
+            f"SNR_imp={val_metrics.get('val_snr_improvement', 'N/A'):.2f}"
+            if isinstance(val_metrics.get("val_snr_improvement"), (int, float))
+            else "SNR_imp=N/A"
+        )
+        stoi_str = (
+            f"STOI={val_metrics.get('val_stoi_enhanced_mean', 'N/A'):.4f}"
+            if isinstance(val_metrics.get("val_stoi_enhanced_mean"), (int, float))
+            else "STOI=N/A"
+        )
+        pesq_str = (
+            f"PESQ={val_metrics.get('val_pesq_enhanced_mean', 'N/A'):.4f}"
+            if isinstance(val_metrics.get("val_pesq_enhanced_mean"), (int, float))
+            else "PESQ=N/A"
+        )
 
         logger.info(
             "Epoch %d/%d | loss=%.4f | val_loss=%.4f | %s | %s | %s | lr=%.1e | %.1fs%s",
-            epoch, epochs,
-            train_loss_sum / n_train, val_loss,
-            snr_str, stoi_str, pesq_str,
-            lr, epoch_time,
+            epoch,
+            epochs,
+            train_loss_sum / n_train,
+            val_loss,
+            snr_str,
+            stoi_str,
+            pesq_str,
+            lr,
+            epoch_time,
             " ★BEST" if is_best else "",
         )
 
@@ -627,7 +710,12 @@ def run_experiment(
     with open(exp_dir / "summary.json", "w") as f:
         json.dump(summary, f, indent=2)
 
-    logger.info("Experiment %s complete. Best epoch: %d, Best val_loss: %.6f", exp_id, best_epoch, best_val_loss)
+    logger.info(
+        "Experiment %s complete. Best epoch: %d, Best val_loss: %.6f",
+        exp_id,
+        best_epoch,
+        best_val_loss,
+    )
     logger.info("Time: %.1fs | Results: %s", total_time, exp_dir)
 
     return summary
@@ -636,6 +724,7 @@ def run_experiment(
 # ---------------------------------------------------------------------------
 # Comparative report
 # ---------------------------------------------------------------------------
+
 
 def generate_comparison_report(summaries: dict, output_dir: Path) -> None:
     """Generate a markdown comparison report across all experiments."""
@@ -661,21 +750,31 @@ def generate_comparison_report(summaries: dict, output_dir: Path) -> None:
             f"| {exp_id} | {summary['experiment_name']} | {summary['loss_type']} | "
             f"{summary['epochs']} | {summary['best_epoch']} | "
             f"{summary['best_val_loss']:.4f} | "
-            f"{snr_imp:.2f} dB" if isinstance(snr_imp, (int, float)) else "N/A" + f" | "
-            f"{stoi:.4f}" if isinstance(stoi, (int, float)) else "N/A" + f" | "
-            f"{pesq:.4f}" if isinstance(pesq, (int, float)) else "N/A" + f" |"
+            f"{snr_imp:.2f} dB"
+            if isinstance(snr_imp, (int, float))
+            else (
+                "N/A" + f" | " f"{stoi:.4f}"
+                if isinstance(stoi, (int, float))
+                else (
+                    "N/A" + f" | " f"{pesq:.4f}"
+                    if isinstance(pesq, (int, float))
+                    else "N/A" + f" |"
+                )
+            )
         )
 
-    lines.extend([
-        "",
-        "## Targets\n",
-        "- SNR Improvement: > +15 dB",
-        "- Enhanced STOI: > 0.85",
-        "- Enhanced PESQ: > 2.50",
-        "- Classification: > 75%",
-        "- Parameters: < 100,000 (actual: 70,789)",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Targets\n",
+            "- SNR Improvement: > +15 dB",
+            "- Enhanced STOI: > 0.85",
+            "- Enhanced PESQ: > 2.50",
+            "- Classification: > 75%",
+            "- Parameters: < 100,000 (actual: 70,789)",
+            "",
+        ]
+    )
 
     report_path.write_text("\n".join(lines), encoding="utf-8")
     logger.info("Comparison report: %s", report_path)
@@ -690,16 +789,23 @@ def generate_comparison_report(summaries: dict, output_dir: Path) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     import argparse
+
     parser = argparse.ArgumentParser(description="Phase 3 Speech Quality Optimization")
     parser.add_argument(
-        "--experiments", nargs="+", default=None,
-        help="Experiment IDs to run (e.g., A B D). Default: all (A-F)."
+        "--experiments",
+        nargs="+",
+        default=None,
+        help="Experiment IDs to run (e.g., A B D). Default: all (A-F).",
     )
     parser.add_argument("--device", default="cpu", help="Device (cpu/cuda)")
-    parser.add_argument("--skip-existing", action="store_true",
-                        help="Skip experiments that already have results")
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Skip experiments that already have results",
+    )
     args = parser.parse_args()
 
     device = args.device
@@ -731,7 +837,11 @@ def main():
         except Exception as e:
             logger.error("Experiment %s FAILED: %s", exp_id, e)
             logger.error(traceback.format_exc())
-            summaries[exp_id] = {"experiment_id": exp_id, "status": "FAILED", "error": str(e)}
+            summaries[exp_id] = {
+                "experiment_id": exp_id,
+                "status": "FAILED",
+                "error": str(e),
+            }
 
     # Generate comparison report
     report_dir = EXP_BASE / "phase3_analysis"

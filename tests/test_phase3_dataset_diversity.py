@@ -10,6 +10,7 @@ Verifies:
 5. validation samples remain deterministic across calls
 6. phase3_v2 train / val / test speaker and file independence (zero leakage)
 """
+
 import sys
 from pathlib import Path
 
@@ -18,6 +19,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import json
+from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
@@ -35,9 +37,15 @@ def test_same_epoch_same_index_identical():
     s1 = ds[10]
     s2 = ds[10]
 
-    assert torch.equal(s1["m1_waveform"], s2["m1_waveform"]), "Same epoch+index must produce bit-identical m1"
-    assert torch.equal(s1["m2_waveform"], s2["m2_waveform"]), "Same epoch+index must produce bit-identical m2"
-    assert torch.equal(s1["clean_target"], s2["clean_target"]), "Same epoch+index must produce bit-identical clean target"
+    assert torch.equal(
+        s1["m1_waveform"], s2["m1_waveform"]
+    ), "Same epoch+index must produce bit-identical m1"
+    assert torch.equal(
+        s1["m2_waveform"], s2["m2_waveform"]
+    ), "Same epoch+index must produce bit-identical m2"
+    assert torch.equal(
+        s1["clean_target"], s2["clean_target"]
+    ), "Same epoch+index must produce bit-identical clean target"
     assert s1["target_snr_db"] == s2["target_snr_db"]
     assert s1["configured_delay_samples"] == s2["configured_delay_samples"]
 
@@ -54,11 +62,19 @@ def test_different_epoch_same_index_different():
     s_ep2 = ds[10]
 
     # Mixture waveforms must differ across epochs
-    m1_diff_01 = float(torch.max(torch.abs(s_ep0["m1_waveform"] - s_ep1["m1_waveform"])))
-    m1_diff_12 = float(torch.max(torch.abs(s_ep1["m1_waveform"] - s_ep2["m1_waveform"])))
+    m1_diff_01 = float(
+        torch.max(torch.abs(s_ep0["m1_waveform"] - s_ep1["m1_waveform"]))
+    )
+    m1_diff_12 = float(
+        torch.max(torch.abs(s_ep1["m1_waveform"] - s_ep2["m1_waveform"]))
+    )
 
-    assert m1_diff_01 > 1e-4, f"Epoch 0 and 1 must produce different mixtures, got diff={m1_diff_01}"
-    assert m1_diff_12 > 1e-4, f"Epoch 1 and 2 must produce different mixtures, got diff={m1_diff_12}"
+    assert (
+        m1_diff_01 > 1e-4
+    ), f"Epoch 0 and 1 must produce different mixtures, got diff={m1_diff_01}"
+    assert (
+        m1_diff_12 > 1e-4
+    ), f"Epoch 1 and 2 must produce different mixtures, got diff={m1_diff_12}"
     assert s_ep0["sample_seed"] != s_ep1["sample_seed"]
     assert s_ep1["sample_seed"] != s_ep2["sample_seed"]
 
@@ -76,14 +92,39 @@ def test_same_seed_epoch_index_reproducible():
     assert sample_a["sample_seed"] == sample_b["sample_seed"]
 
 
-def test_worker_seeds_no_collision():
-    """Test 4: different workers receive distinct collision-free seeds."""
-    seed_w0 = Phase1Dataset.compute_sample_seed(global_seed=42, epoch=1, worker_id=0, index=100)
-    seed_w1 = Phase1Dataset.compute_sample_seed(global_seed=42, epoch=1, worker_id=1, index=100)
-    seed_w2 = Phase1Dataset.compute_sample_seed(global_seed=42, epoch=1, worker_id=2, index=100)
+def test_worker_ids_do_not_change_sample_seed():
+    """A sample's identity is independent of which DataLoader worker requests it."""
+    seed_w0 = Phase1Dataset.compute_sample_seed(
+        global_seed=42, epoch=1, worker_id=0, index=100
+    )
+    seed_w1 = Phase1Dataset.compute_sample_seed(
+        global_seed=42, epoch=1, worker_id=1, index=100
+    )
+    seed_w2 = Phase1Dataset.compute_sample_seed(
+        global_seed=42, epoch=1, worker_id=2, index=100
+    )
 
-    seeds = {seed_w0, seed_w1, seed_w2}
-    assert len(seeds) == 3, "Worker IDs must produce strictly distinct seeds"
+    assert seed_w0 == seed_w1 == seed_w2
+
+
+def test_worker_assignments_return_identical_sample(monkeypatch):
+    dataset = Phase1Dataset(manifest_path=TRAIN_MANIFEST, seed=123, epoch=5)
+    monkeypatch.setattr(
+        torch.utils.data, "get_worker_info", lambda: SimpleNamespace(id=0)
+    )
+    worker_zero_sample = dataset[10]
+    monkeypatch.setattr(
+        torch.utils.data, "get_worker_info", lambda: SimpleNamespace(id=1)
+    )
+    worker_one_sample = dataset[10]
+
+    assert worker_zero_sample["sample_seed"] == worker_one_sample["sample_seed"]
+    assert torch.equal(
+        worker_zero_sample["m1_waveform"], worker_one_sample["m1_waveform"]
+    )
+    assert torch.equal(
+        worker_zero_sample["m2_waveform"], worker_one_sample["m2_waveform"]
+    )
 
 
 def test_validation_samples_remain_deterministic():
@@ -97,7 +138,9 @@ def test_validation_samples_remain_deterministic():
     val_ds.set_epoch(10)
     v10 = val_ds[5]
 
-    assert torch.equal(v0["m1_waveform"], v10["m1_waveform"]), "Validation samples must not change with set_epoch"
+    assert torch.equal(
+        v0["m1_waveform"], v10["m1_waveform"]
+    ), "Validation samples must not change with set_epoch"
     assert v0["epoch"] == 0 and v10["epoch"] == 0
 
 
@@ -106,32 +149,69 @@ def test_phase3_v2_zero_leakage():
     if not (PHASE3_V2_DIR / "train_manifest.jsonl").exists():
         pytest.skip("phase3_v2 manifests not yet generated")
 
-    train_records = [json.loads(l) for l in (PHASE3_V2_DIR / "train_manifest.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
-    val_records = [json.loads(l) for l in (PHASE3_V2_DIR / "val_manifest.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
-    test_records = [json.loads(l) for l in (PHASE3_V2_DIR / "test_manifest.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+    train_records = [
+        json.loads(l)
+        for l in (PHASE3_V2_DIR / "train_manifest.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if l.strip()
+    ]
+    val_records = [
+        json.loads(l)
+        for l in (PHASE3_V2_DIR / "val_manifest.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if l.strip()
+    ]
+    test_records = [
+        json.loads(l)
+        for l in (PHASE3_V2_DIR / "test_manifest.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if l.strip()
+    ]
 
     # 1. File-level overlap
     train_files = {r["source_path"] for r in train_records}
     val_files = {r["source_path"] for r in val_records}
     test_files = {r["source_path"] for r in test_records}
 
-    assert len(train_files.intersection(val_files)) == 0, "Train and Val files must not overlap"
-    assert len(train_files.intersection(test_files)) == 0, "Train and Test files must not overlap"
-    assert len(val_files.intersection(test_files)) == 0, "Val and Test files must not overlap"
+    assert (
+        len(train_files.intersection(val_files)) == 0
+    ), "Train and Val files must not overlap"
+    assert (
+        len(train_files.intersection(test_files)) == 0
+    ), "Train and Test files must not overlap"
+    assert (
+        len(val_files.intersection(test_files)) == 0
+    ), "Val and Test files must not overlap"
 
     # 2. Clean speaker overlap
-    train_speakers = {r["speaker_id"] for r in train_records if r["source_group"] == "clean"}
-    val_speakers = {r["speaker_id"] for r in val_records if r["source_group"] == "clean"}
-    test_speakers = {r["speaker_id"] for r in test_records if r["source_group"] == "clean"}
+    train_speakers = {
+        r["speaker_id"] for r in train_records if r["source_group"] == "clean"
+    }
+    val_speakers = {
+        r["speaker_id"] for r in val_records if r["source_group"] == "clean"
+    }
+    test_speakers = {
+        r["speaker_id"] for r in test_records if r["source_group"] == "clean"
+    }
 
-    assert len(train_speakers.intersection(val_speakers)) == 0, f"Speaker overlap Train/Val: {train_speakers.intersection(val_speakers)}"
-    assert len(train_speakers.intersection(test_speakers)) == 0, f"Speaker overlap Train/Test: {train_speakers.intersection(test_speakers)}"
-    assert len(val_speakers.intersection(test_speakers)) == 0, f"Speaker overlap Val/Test: {val_speakers.intersection(test_speakers)}"
+    assert (
+        len(train_speakers.intersection(val_speakers)) == 0
+    ), f"Speaker overlap Train/Val: {train_speakers.intersection(val_speakers)}"
+    assert (
+        len(train_speakers.intersection(test_speakers)) == 0
+    ), f"Speaker overlap Train/Test: {train_speakers.intersection(test_speakers)}"
+    assert (
+        len(val_speakers.intersection(test_speakers)) == 0
+    ), f"Speaker overlap Val/Test: {val_speakers.intersection(test_speakers)}"
 
 
 def test_strict_checkpoint_loading():
     """Test 7: Checkpoints load into LightweightCNNGRUMaskModel with strict=True (0 missing, 0 unexpected)."""
     from src.models.cnn_gru_mask import LightweightCNNGRUMaskModel
+
     for ckpt_p in [
         PROJECT_ROOT / "experiments" / "phase3_D" / "best_checkpoint.pt",
         PROJECT_ROOT / "experiments" / "phase3_v2" / "best_checkpoint.pt",
@@ -141,5 +221,9 @@ def test_strict_checkpoint_loading():
         ckpt = torch.load(ckpt_p, map_location="cpu")
         model = LightweightCNNGRUMaskModel()
         incompatible_keys = model.load_state_dict(ckpt["model_state_dict"], strict=True)
-        assert len(incompatible_keys.missing_keys) == 0, f"Missing keys in {ckpt_p}: {incompatible_keys.missing_keys}"
-        assert len(incompatible_keys.unexpected_keys) == 0, f"Unexpected keys in {ckpt_p}: {incompatible_keys.unexpected_keys}"
+        assert (
+            len(incompatible_keys.missing_keys) == 0
+        ), f"Missing keys in {ckpt_p}: {incompatible_keys.missing_keys}"
+        assert (
+            len(incompatible_keys.unexpected_keys) == 0
+        ), f"Unexpected keys in {ckpt_p}: {incompatible_keys.unexpected_keys}"

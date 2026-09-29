@@ -38,9 +38,9 @@ import json
 from collections import Counter
 from pathlib import Path
 
-
-MANIFEST = Path("data/manifests/dataset_manifest.jsonl")
-OUTPUT_DIR = Path("data/manifests")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+MANIFEST = PROJECT_ROOT / "data" / "manifests" / "dataset_manifest.jsonl"
+OUTPUT_DIR = PROJECT_ROOT / "data" / "manifests"
 
 SEED = 20260925
 
@@ -52,8 +52,7 @@ TEST_FRACTION = 0.15
 def load_manifest(path: Path) -> list[dict]:
     if not path.exists():
         raise SystemExit(
-            f"Master manifest not found: {path}\n"
-            "Run create_manifest.py first."
+            f"Master manifest not found: {path}\n" "Run create_manifest.py first."
         )
 
     records = [
@@ -156,10 +155,7 @@ def allocate_group(
     remainder = total - sum(base.values())
 
     fractions = sorted(
-        (
-            (desired[name] - base[name], name)
-            for name in base
-        ),
+        ((desired[name] - base[name], name) for name in base),
         reverse=True,
     )
 
@@ -191,9 +187,7 @@ def allocate_group(
     # Any records left are assigned to splits with remaining capacity.
     for record in remaining:
         available = [
-            split
-            for split in ("train", "validation", "test")
-            if capacities[split] > 0
+            split for split in ("train", "validation", "test") if capacities[split] > 0
         ]
 
         if not available:
@@ -228,16 +222,10 @@ def main() -> None:
             f"but master manifest contains {total}."
         )
 
-    fraction_sum = (
-        TRAIN_FRACTION
-        + VALIDATION_FRACTION
-        + TEST_FRACTION
-    )
+    fraction_sum = TRAIN_FRACTION + VALIDATION_FRACTION + TEST_FRACTION
 
     if abs(fraction_sum - 1.0) > 1e-9:
-        raise SystemExit(
-            "Split fractions do not sum to 1.0."
-        )
+        raise SystemExit("Split fractions do not sum to 1.0.")
 
     # ---------------------------------------------------------
     # Group recordings by source category.
@@ -278,10 +266,7 @@ def main() -> None:
         }
 
         # Initial integer allocation.
-        counts = {
-            name: int(desired[name])
-            for name in desired
-        }
+        counts = {name: int(desired[name]) for name in desired}
 
         remainder = group_total - sum(counts.values())
 
@@ -320,10 +305,7 @@ def main() -> None:
             )
 
             for _, name in reversed(split_order):
-                available = (
-                    remaining_targets[name]
-                    - counts[name]
-                )
+                available = remaining_targets[name] - counts[name]
 
                 add = min(available, leftovers)
 
@@ -347,21 +329,14 @@ def main() -> None:
         )
 
         for split in split_records:
-            split_records[split].extend(
-                allocation[split]
-            )
-            remaining_targets[split] -= len(
-                allocation[split]
-            )
+            split_records[split].extend(allocation[split])
+            remaining_targets[split] -= len(allocation[split])
 
     # ---------------------------------------------------------
     # Final exact-target check.
     # ---------------------------------------------------------
 
-    actual_counts = {
-        split: len(split_records[split])
-        for split in split_records
-    }
+    actual_counts = {split: len(split_records[split]) for split in split_records}
 
     if actual_counts != targets:
         raise RuntimeError(
@@ -439,43 +414,26 @@ def main() -> None:
         count = len(split_records[split])
         percentage = 100.0 * count / total
 
-        print(
-            f"{split.capitalize():12s}: "
-            f"{count:4d} "
-            f"({percentage:.2f}%)"
-        )
+        print(f"{split.capitalize():12s}: " f"{count:4d} " f"({percentage:.2f}%)")
 
     print()
     print("Expected:")
+    print(f"Train:       {targets['train']} " f"({TRAIN_FRACTION * 100:.2f}%)")
     print(
-        f"Train:       {targets['train']} "
-        f"({TRAIN_FRACTION * 100:.2f}%)"
+        f"Validation:  {targets['validation']} " f"({VALIDATION_FRACTION * 100:.2f}%)"
     )
-    print(
-        f"Validation:  {targets['validation']} "
-        f"({VALIDATION_FRACTION * 100:.2f}%)"
-    )
-    print(
-        f"Test:        {targets['test']} "
-        f"({TEST_FRACTION * 100:.2f}%)"
-    )
+    print(f"Test:        {targets['test']} " f"({TEST_FRACTION * 100:.2f}%)")
 
     print("\nClass distribution:")
 
     for split in ("train", "validation", "test"):
 
         counter = Counter(
-            (
-                "clean"
-                if record["source_group"] == "clean"
-                else record["noise_class"]
-            )
+            ("clean" if record["source_group"] == "clean" else record["noise_class"])
             for record in split_records[split]
         )
 
-        print(
-            f"  {split:10s}: {dict(counter)}"
-        )
+        print(f"  {split:10s}: {dict(counter)}")
 
     print("\nCreated:")
 

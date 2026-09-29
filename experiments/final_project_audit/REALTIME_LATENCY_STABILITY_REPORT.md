@@ -4,6 +4,8 @@
 **Module**: Real-Time Dual-Microphone Audio Engine & Latency Profiler  
 **Timestamp**: 2026-09-28  
 
+> Audit note (2026-09-30): the timing tables below are historical host/software telemetry and have not been revalidated in this audit. They do not establish acoustic ANC performance or current end-to-end hardware latency. Physical ANC remains **REQUIRES HARDWARE**; the STM32 latency forecast below is explicitly unmeasured.
+
 ---
 
 ## 1. Executive Summary & Root Cause Analysis
@@ -131,4 +133,4 @@ The updated telemetry endpoint (`GET /api/stream/telemetry`) and WebSocket strea
 ## 8. Remaining Hardware Limitations & Next Steps
 
 1. **Host Audio Driver Buffer Floor**: Total acoustic round-trip latency on Windows MME host drivers averages `~78-110 ms` due to system audio engine buffers. Selecting ASIO or DirectSound WASAPI Low-Latency drivers reduces hardware buffer overhead to `< 25 ms` total round-trip.
-2. **STM32H753ZI Embedded Deployment**: For the target microcontroller deployment, Direct Memory Access (DMA) double-buffering will bypass OS soundcard drivers entirely, achieving `< 20 ms` total physical acoustic latency.
+2. **STM32H753ZI Embedded Deployment**: DMA double-buffering is a design proposal only. No target-board measurement exists; total physical acoustic latency is **NOT TESTED** and must not be claimed as `< 20 ms`.

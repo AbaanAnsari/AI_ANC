@@ -19,19 +19,16 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 import wave
 from collections import Counter
 from pathlib import Path
 
-
-DEFAULT_ROOT = Path(r"D:\SIH\SIH_2026\data")
-
-MASTER = Path("data/manifests/dataset_manifest.jsonl")
-TRAIN = Path("data/manifests/train_manifest.jsonl")
-VAL = Path("data/manifests/val_manifest.jsonl")
-TEST = Path("data/manifests/test_manifest.jsonl")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_ROOT = PROJECT_ROOT / "data" / "raw" / "dataset"
+DEFAULT_MANIFEST_DIR = PROJECT_ROOT / "data" / "manifests"
 
 # The current frozen dataset established by the project.
 EXPECTED_TOTAL_WAV = 3820
@@ -48,8 +45,9 @@ def load_jsonl(path: Path):
     ]
 
 
-def main():
-    raw_root = DEFAULT_ROOT
+def main(raw_root: Path = DEFAULT_ROOT, manifest_dir: Path = DEFAULT_MANIFEST_DIR):
+    raw_root = Path(raw_root).resolve()
+    manifest_dir = Path(manifest_dir).resolve()
 
     errors = []
     warnings = []
@@ -64,10 +62,10 @@ def main():
         return 1
 
     try:
-        master = load_jsonl(MASTER)
-        train = load_jsonl(TRAIN)
-        validation = load_jsonl(VAL)
-        test = load_jsonl(TEST)
+        master = load_jsonl(manifest_dir / "dataset_manifest.jsonl")
+        train = load_jsonl(manifest_dir / "train_manifest.jsonl")
+        validation = load_jsonl(manifest_dir / "val_manifest.jsonl")
+        test = load_jsonl(manifest_dir / "test_manifest.jsonl")
     except Exception as exc:
         print(f"FAIL: could not load manifests: {exc}")
         return 1
@@ -104,9 +102,7 @@ def main():
         paths = [r["source_path"] for r in rows]
 
         if len(paths) != len(set(paths)):
-            errors.append(
-                f"Duplicate source_path inside {split_name} manifest."
-            )
+            errors.append(f"Duplicate source_path inside {split_name} manifest.")
 
         split_sets[split_name] = set(paths)
 
@@ -143,11 +139,7 @@ def main():
     # ------------------------------------------------------------------
     master_set = set(master_paths)
 
-    union = (
-        split_sets["train"]
-        | split_sets["validation"]
-        | split_sets["test"]
-    )
+    union = split_sets["train"] | split_sets["validation"] | split_sets["test"]
 
     missing_from_splits = master_set - union
     unknown_in_splits = union - master_set
@@ -176,9 +168,7 @@ def main():
             missing_files.append(record["source_path"])
 
     if missing_files:
-        errors.append(
-            f"{len(missing_files)} manifest source file(s) are missing."
-        )
+        errors.append(f"{len(missing_files)} manifest source file(s) are missing.")
 
     # ------------------------------------------------------------------
     # 6. Canonical internal processing contract
@@ -186,21 +176,16 @@ def main():
     for record in master:
         if record.get("internal_sample_rate_hz") != 16000:
             errors.append(
-                f"Incorrect internal sample rate: "
-                f"{record['source_path']}"
+                f"Incorrect internal sample rate: " f"{record['source_path']}"
             )
 
         if record.get("internal_channels") != 1:
             errors.append(
-                f"Incorrect internal channel count: "
-                f"{record['source_path']}"
+                f"Incorrect internal channel count: " f"{record['source_path']}"
             )
 
         if record.get("internal_dtype") != "float32":
-            errors.append(
-                f"Incorrect internal dtype: "
-                f"{record['source_path']}"
-            )
+            errors.append(f"Incorrect internal dtype: " f"{record['source_path']}")
 
     # ------------------------------------------------------------------
     # 7. Current frozen count
@@ -259,8 +244,7 @@ def main():
 
     if absent:
         errors.append(
-            "Required dataset categories absent: "
-            + ", ".join(sorted(absent))
+            "Required dataset categories absent: " + ", ".join(sorted(absent))
         )
 
     print("\nCategory counts:")
@@ -303,4 +287,8 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dataset-root", type=Path, default=DEFAULT_ROOT)
+    parser.add_argument("--manifest-dir", type=Path, default=DEFAULT_MANIFEST_DIR)
+    args = parser.parse_args()
+    sys.exit(main(args.dataset_root, args.manifest_dir))

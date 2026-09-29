@@ -12,6 +12,7 @@ Coordinates:
     - Real-time telemetry, latency profiling, and RTF calculation
     - Acoustic feedback safety and master gain controls
 """
+
 from __future__ import annotations
 
 import logging
@@ -36,22 +37,17 @@ from src.realtime.audio_input import AudioInputStream
 from src.realtime.audio_output import AudioOutputStream
 from src.realtime.device_manager import AudioDeviceManager, AudioDeviceInfo
 from src.realtime.ring_buffer import RingBuffer
+from src.project_paths import PHASE3_V2_CHECKPOINT
 
 logger = logging.getLogger(__name__)
 
-_root = Path(__file__).resolve().parents[2]
-_p3_100 = _root / "experiments" / "phase3_100ep" / "best_checkpoint.pt"
-_p3_d = _root / "experiments" / "phase3_D" / "best_checkpoint.pt"
-_p2_step6 = _root / "experiments" / "phase2_step6_targeted_crm_full" / "best_checkpoint.pt"
-
-DEFAULT_CHECKPOINT = (
-    _p3_100 if _p3_100.exists() else (_p3_d if _p3_d.exists() else _p2_step6)
-)
+DEFAULT_CHECKPOINT = PHASE3_V2_CHECKPOINT
 
 
 @dataclass
 class LiveTelemetry:
     """Snapshot of real-time engine telemetry."""
+
     status: str = "STOPPED"
     input_device: str = "None"
     output_device: str = "None"
@@ -162,7 +158,6 @@ class LiveAudioEngine:
         self._output_buffer = RingBuffer(self.buffer_capacity)
         self.diagnostic_delay_ms: float = 0.0
 
-
         # Worker thread
         self._worker_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -204,7 +199,10 @@ class LiveAudioEngine:
     def _ensure_pipeline_loaded(self) -> None:
         """Pre-load AI model once at startup."""
         if self._pipeline is None:
-            logger.info("Initializing StreamingPipeline with checkpoint %s", self.checkpoint_path)
+            logger.info(
+                "Initializing StreamingPipeline with checkpoint %s",
+                self.checkpoint_path,
+            )
             self._pipeline = StreamingPipeline(
                 checkpoint_path=self.checkpoint_path,
                 device=self.device,
@@ -245,7 +243,9 @@ class LiveAudioEngine:
         """Enable or disable direct microphone passthrough diagnostic mode (Phase 10)."""
         self.passthrough_mode = bool(enabled)
         self._telemetry.passthrough_mode = self.passthrough_mode
-        logger.info("[INFO] LiveAudioEngine: Passthrough mode set to %s", self.passthrough_mode)
+        logger.info(
+            "[INFO] LiveAudioEngine: Passthrough mode set to %s", self.passthrough_mode
+        )
 
     def get_input_waveform(self, n_samples: int = 512) -> dict:
         """Return the most recent unrounded physical input audio samples (Phase 11)."""
@@ -253,7 +253,7 @@ class LiveAudioEngine:
             samples = self._input_stream.get_recent_samples(n_samples)
         else:
             samples = np.zeros(n_samples, dtype=np.float32)
-        rms = float(np.sqrt(np.mean(samples ** 2))) if len(samples) > 0 else 0.0
+        rms = float(np.sqrt(np.mean(samples**2))) if len(samples) > 0 else 0.0
         peak = float(np.max(np.abs(samples))) if len(samples) > 0 else 0.0
         return {
             "samples": [round(float(v), 5) for v in samples],
@@ -269,7 +269,7 @@ class LiveAudioEngine:
             samples = self._output_stream.get_recent_samples(n_samples)
         else:
             samples = np.zeros(n_samples, dtype=np.float32)
-        rms = float(np.sqrt(np.mean(samples ** 2))) if len(samples) > 0 else 0.0
+        rms = float(np.sqrt(np.mean(samples**2))) if len(samples) > 0 else 0.0
         peak = float(np.max(np.abs(samples))) if len(samples) > 0 else 0.0
         return {
             "samples": [round(float(v), 5) for v in samples],
@@ -293,17 +293,27 @@ class LiveAudioEngine:
     def get_audio_health(self) -> dict:
         """Phase 18 strict health check endpoint contract."""
         in_open = bool(self._input_stream and self._input_stream.is_running)
-        in_cb_active = bool(self._input_stream and self._input_stream.input_callback_count > 0)
+        in_cb_active = bool(
+            self._input_stream and self._input_stream.input_callback_count > 0
+        )
         in_fr = self._input_stream.input_frames_received if self._input_stream else 0
-        in_rms = float(self._input_stream.last_input_rms_m1) if self._input_stream else 0.0
+        in_rms = (
+            float(self._input_stream.last_input_rms_m1) if self._input_stream else 0.0
+        )
 
-        proc_active = bool(self._worker_thread and self._worker_thread.is_alive() and self._is_running)
+        proc_active = bool(
+            self._worker_thread and self._worker_thread.is_alive() and self._is_running
+        )
         proc_blocks = int(self._total_hops_processed)
 
         out_open = bool(self._output_stream and self._output_stream.is_running)
-        out_cb_active = bool(self._output_stream and self._output_stream.output_callback_count > 0)
+        out_cb_active = bool(
+            self._output_stream and self._output_stream.output_callback_count > 0
+        )
         out_fr = self._output_stream.output_frames_sent if self._output_stream else 0
-        out_rms = float(self._output_stream.last_output_rms) if self._output_stream else 0.0
+        out_rms = (
+            float(self._output_stream.last_output_rms) if self._output_stream else 0.0
+        )
 
         errors: List[str] = []
         if self._telemetry and self._telemetry.error:
@@ -313,7 +323,9 @@ class LiveAudioEngine:
         if self._input_stream and self._input_stream.callback_errors > 0:
             errors.append(f"{self._input_stream.callback_errors} input callback errors")
         if self._output_stream and self._output_stream.callback_errors > 0:
-            errors.append(f"{self._output_stream.callback_errors} output callback errors")
+            errors.append(
+                f"{self._output_stream.callback_errors} output callback errors"
+            )
 
         return {
             "input_stream_open": in_open,
@@ -388,23 +400,39 @@ class LiveAudioEngine:
             out_rms = float(t.output_rms) if t else None
 
             # RTF
-            rtf_val = round(float(t.real_time_factor), 3) if (t and t.real_time_factor > 0) else 0.0
+            rtf_val = (
+                round(float(t.real_time_factor), 3)
+                if (t and t.real_time_factor > 0)
+                else 0.0
+            )
 
             # Build Phase 2 audio diagnostics sub-dictionary
             in_cb = self._input_stream.input_callback_count if self._input_stream else 0
-            in_fr = self._input_stream.input_frames_received if self._input_stream else 0
-            in_peak = self._input_stream.last_input_peak_m1 if self._input_stream else 0.0
+            in_fr = (
+                self._input_stream.input_frames_received if self._input_stream else 0
+            )
+            in_peak = (
+                self._input_stream.last_input_peak_m1 if self._input_stream else 0.0
+            )
             in_nonzero = bool(in_peak > 1e-4)
 
-            out_cb = self._output_stream.output_callback_count if self._output_stream else 0
-            out_fr = self._output_stream.output_frames_sent if self._output_stream else 0
-            out_peak = self._output_stream.last_output_peak if self._output_stream else 0.0
+            out_cb = (
+                self._output_stream.output_callback_count if self._output_stream else 0
+            )
+            out_fr = (
+                self._output_stream.output_frames_sent if self._output_stream else 0
+            )
+            out_peak = (
+                self._output_stream.last_output_peak if self._output_stream else 0.0
+            )
             out_nonzero = bool(out_peak > 1e-4)
 
             worker_alive = bool(self._worker_thread and self._worker_thread.is_alive())
             queue_depth = self._m1_buffer.available if self._m1_buffer else 0
             in_overflow = self._input_stream.overflow_count if self._input_stream else 0
-            out_underflow = self._output_stream.underflow_count if self._output_stream else 0
+            out_underflow = (
+                self._output_stream.underflow_count if self._output_stream else 0
+            )
 
             audio_dict = {
                 "running": bool(self._is_running),
@@ -453,8 +481,16 @@ class LiveAudioEngine:
                 },
                 "underflows": out_underflow,
                 "overflows": in_overflow,
-                "last_input_timestamp": self._input_stream.last_input_timestamp if self._input_stream else 0.0,
-                "last_output_timestamp": self._output_stream.last_output_timestamp if self._output_stream else 0.0,
+                "last_input_timestamp": (
+                    self._input_stream.last_input_timestamp
+                    if self._input_stream
+                    else 0.0
+                ),
+                "last_output_timestamp": (
+                    self._output_stream.last_output_timestamp
+                    if self._output_stream
+                    else 0.0
+                ),
             }
 
             return {
@@ -668,8 +704,15 @@ class LiveAudioEngine:
                 self._telemetry.warning = det_in.get("warning")
                 self._telemetry.error = None
 
-                logger.info("LiveAudioEngine started successfully: in=%s, out=%s", det_in['device_name'], det_out['device_name'])
-                return True, f"Real-time processing active on '{det_in['device_name']}' -> '{det_out['device_name']}'."
+                logger.info(
+                    "LiveAudioEngine started successfully: in=%s, out=%s",
+                    det_in["device_name"],
+                    det_out["device_name"],
+                )
+                return (
+                    True,
+                    f"Real-time processing active on '{det_in['device_name']}' -> '{det_out['device_name']}'.",
+                )
 
             except Exception as e:
                 logger.error("Failed to start LiveAudioEngine: %s", e)
@@ -732,7 +775,9 @@ class LiveAudioEngine:
         target_recovery_samples = int(self.sample_rate * TARGET_RECOVERY_MS / 1000.0)
         max_output_queue_samples = int(self.sample_rate * MAX_OUTPUT_QUEUE_MS / 1000.0)
 
-        block_duration_s = self.block_size / self.sample_rate  # 256 / 16000 = 0.016 s (16 ms)
+        block_duration_s = (
+            self.block_size / self.sample_rate
+        )  # 256 / 16000 = 0.016 s (16 ms)
 
         while not self._stop_event.is_set():
             avail_m1 = self._m1_buffer.available
@@ -753,7 +798,9 @@ class LiveAudioEngine:
                 if actual_dropped > 0:
                     dropped_ms = (actual_dropped / self.sample_rate) * 1000.0
                     queue_before_ms = (queued_samples / self.sample_rate) * 1000.0
-                    queue_after_ms = ((queued_samples - actual_dropped) / self.sample_rate) * 1000.0
+                    queue_after_ms = (
+                        (queued_samples - actual_dropped) / self.sample_rate
+                    ) * 1000.0
 
                     self._telemetry.backlog_drop_events += 1
                     self._telemetry.dropped_samples_total += actual_dropped
@@ -762,7 +809,10 @@ class LiveAudioEngine:
 
                     logger.warning(
                         "[WARNING] REALTIME BACKLOG DROP: dropped_samples=%d (%.1f ms) queue_before=%.1f ms queue_after=%.1f ms",
-                        actual_dropped, dropped_ms, queue_before_ms, queue_after_ms
+                        actual_dropped,
+                        dropped_ms,
+                        queue_before_ms,
+                        queue_after_ms,
                     )
 
             # Check Output Queue Backlog
@@ -770,7 +820,9 @@ class LiveAudioEngine:
                 out_drop = self._output_buffer.available - (self.block_size * 2)
                 if out_drop > 0:
                     self._output_buffer.discard(out_drop)
-                    logger.warning("[WARNING] OUTPUT BACKLOG TRIM: trimmed %d samples", out_drop)
+                    logger.warning(
+                        "[WARNING] OUTPUT BACKLOG TRIM: trimmed %d samples", out_drop
+                    )
 
             # Optional dev diagnostic delay test mode
             if hasattr(self, "diagnostic_delay_ms") and self.diagnostic_delay_ms > 0:
@@ -800,7 +852,9 @@ class LiveAudioEngine:
                     spec_win = self._spec_buffer * self._spec_window
                     fft_mag = np.abs(np.fft.rfft(spec_win, n=N_FFT))  # (257,)
                     chunks = np.array_split(fft_mag[:256], 64)
-                    band_mags = np.array([float(np.mean(c)) for c in chunks], dtype=np.float32)
+                    band_mags = np.array(
+                        [float(np.mean(c)) for c in chunks], dtype=np.float32
+                    )
                     band_db = 20.0 * np.log10(np.maximum(band_mags, 1e-6))
                     band_norm = np.clip((band_db + 80.0) / 80.0, 0.0, 1.0)
                     spec_slice = [round(float(v), 4) for v in band_norm]
@@ -822,12 +876,16 @@ class LiveAudioEngine:
                         enhanced_hop = self._pipeline.read_output(HOP_SIZE)
 
                         if len(enhanced_hop) < HOP_SIZE:
-                            pad = m1_hop[len(enhanced_hop):]
+                            pad = m1_hop[len(enhanced_hop) :]
                             enhanced_hop = np.concatenate([enhanced_hop, pad])
 
                         if not np.all(np.isfinite(enhanced_hop)):
-                            logger.warning("[WARN] Non-finite output detected in pipeline! Clamping to 0.0")
-                            enhanced_hop = np.nan_to_num(enhanced_hop, nan=0.0, posinf=0.0, neginf=0.0)
+                            logger.warning(
+                                "[WARN] Non-finite output detected in pipeline! Clamping to 0.0"
+                            )
+                            enhanced_hop = np.nan_to_num(
+                                enhanced_hop, nan=0.0, posinf=0.0, neginf=0.0
+                            )
                     except Exception as e:
                         self._processing_errors += 1
                         logger.error("[ERR] Processing block error in pipeline: %s", e)
@@ -860,15 +918,21 @@ class LiveAudioEngine:
             now_sec = time.time()
             if now_sec - self._last_proc_log_time >= 1.0:
                 self._last_proc_log_time = now_sec
-                in_rms_log = float(np.sqrt(np.mean(m1_block ** 2)))
-                out_rms_log = float(np.sqrt(np.mean(enhanced_block ** 2)))
+                in_rms_log = float(np.sqrt(np.mean(m1_block**2)))
+                out_rms_log = float(np.sqrt(np.mean(enhanced_block**2)))
                 logger.info(
                     "[INFO] Processing block: block=%d (256 smp) input_rms=%.6f output_rms=%.6f errors=%d passthrough=%s",
-                    self._total_hops_processed // 2, in_rms_log, out_rms_log, self._processing_errors, self.passthrough_mode,
+                    self._total_hops_processed // 2,
+                    in_rms_log,
+                    out_rms_log,
+                    self._processing_errors,
+                    self.passthrough_mode,
                 )
 
             # Update telemetry snapshot
-            self._update_telemetry_snapshot(m1_block, m2_block, enhanced_block, proc_ms, spec_slice)
+            self._update_telemetry_snapshot(
+                m1_block, m2_block, enhanced_block, proc_ms, spec_slice
+            )
 
     def _update_telemetry_snapshot(
         self,
@@ -882,9 +946,9 @@ class LiveAudioEngine:
         t = self._telemetry
 
         # Signal levels (genuine float measurement)
-        t.input_rms_m1 = float(np.sqrt(np.mean(m1_hop ** 2)))
-        t.input_rms_m2 = float(np.sqrt(np.mean(m2_hop ** 2)))
-        t.output_rms = float(np.sqrt(np.mean(out_hop ** 2)))
+        t.input_rms_m1 = float(np.sqrt(np.mean(m1_hop**2)))
+        t.input_rms_m2 = float(np.sqrt(np.mean(m2_hop**2)))
+        t.output_rms = float(np.sqrt(np.mean(out_hop**2)))
         t.input_peak_m1 = float(np.max(np.abs(m1_hop)))
         t.output_peak = float(np.max(np.abs(out_hop)))
 
@@ -913,7 +977,9 @@ class LiveAudioEngine:
         t.total_processing_time_s = round(self._total_processing_time_s, 2)
 
         if self._total_audio_duration_s > 0:
-            t.real_time_factor = round(self._total_processing_time_s / self._total_audio_duration_s, 3)
+            t.real_time_factor = round(
+                self._total_processing_time_s / self._total_audio_duration_s, 3
+            )
 
         if self._block_times_ms:
             times = np.array(self._block_times_ms)
@@ -1032,4 +1098,3 @@ class LiveAudioEngine:
                 "output": t.output_waveform,
             },
         }
-

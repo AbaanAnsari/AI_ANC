@@ -9,6 +9,7 @@ Unifies application state with LiveAudioEngine:
     - Current configuration
     - Processing telemetry and metrics
 """
+
 from __future__ import annotations
 
 import logging
@@ -20,26 +21,16 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 import numpy as np
+from src.project_paths import PHASE3_V2_CHECKPOINT
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-PHASE3_100EP_CHECKPOINT = PROJECT_ROOT / "experiments" / "phase3_100ep" / "best_checkpoint.pt"
-PHASE3_D_CHECKPOINT = PROJECT_ROOT / "experiments" / "phase3_D" / "best_checkpoint.pt"
-PHASE3_CHECKPOINT = PROJECT_ROOT / "experiments" / "phase3_H" / "best_checkpoint.pt"
-STEP6_CHECKPOINT = PROJECT_ROOT / "experiments" / "phase2_step6_targeted_crm_full" / "best_checkpoint.pt"
-
-if PHASE3_100EP_CHECKPOINT.exists():
-    DEFAULT_CHECKPOINT = PHASE3_100EP_CHECKPOINT
-elif PHASE3_D_CHECKPOINT.exists():
-    DEFAULT_CHECKPOINT = PHASE3_D_CHECKPOINT
-elif PHASE3_CHECKPOINT.exists():
-    DEFAULT_CHECKPOINT = PHASE3_CHECKPOINT
-else:
-    DEFAULT_CHECKPOINT = STEP6_CHECKPOINT
+DEFAULT_CHECKPOINT = PHASE3_V2_CHECKPOINT
 
 
 @dataclass
 class SimulatorConfig:
     """Runtime configuration."""
+
     checkpoint_path: str = str(DEFAULT_CHECKPOINT)
     device: str = "cpu"
     enable_ai: bool = True
@@ -57,6 +48,7 @@ class SimulatorConfig:
 @dataclass
 class ProcessingMetrics:
     """Per-session processing metrics."""
+
     audio_duration_s: float = 0.0
     processing_time_s: float = 0.0
     real_time_factor: float = 0.0
@@ -72,16 +64,23 @@ class ProcessingMetrics:
     limiter_clipping_count: int = 0
     rms_input: float = 0.0
     rms_output: float = 0.0
+
+
 class CallableBool:
     """Helper enabling both method call state.is_model_loaded() and boolean evaluation."""
+
     def __init__(self, getter: Any) -> None:
         self._getter = getter
+
     def __call__(self) -> bool:
         return bool(self._getter())
+
     def __bool__(self) -> bool:
         return bool(self._getter())
+
     def __repr__(self) -> str:
         return str(bool(self))
+
     def __eq__(self, other: Any) -> bool:
         return bool(self) == bool(other)
 
@@ -112,6 +111,7 @@ class AppState:
             if self._live_engine is None:
                 try:
                     from src.realtime.live_audio_engine import LiveAudioEngine
+
                     self._live_engine = LiveAudioEngine(
                         checkpoint_path=self.config.checkpoint_path,
                         device=self.config.device,
@@ -119,6 +119,7 @@ class AppState:
                 except Exception as e:
                     logger.warning("Could not auto-instantiate LiveAudioEngine: %s", e)
             return self._live_engine
+
     @property
     def is_model_loaded(self) -> CallableBool:
         """Can be called as state.is_model_loaded() or checked as bool(state.is_model_loaded)."""
@@ -243,6 +244,7 @@ class AppState:
             if self._engine is None:
                 try:
                     from src.realtime.realtime_engine import RealtimeEngine
+
                     self._engine = RealtimeEngine(
                         checkpoint_path=self.config.checkpoint_path,
                         device=self.config.device,

@@ -23,6 +23,7 @@ ONNX outputs:
 NOTE: The old LightweightCNNTGRUModel export (cnn_gru.onnx) is preserved
 as a historical artifact. This script now exports cnn_gru_mask.onnx.
 """
+
 from __future__ import annotations
 
 import logging
@@ -34,6 +35,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.project_paths import PHASE3_V2_CHECKPOINT
+
 import torch
 import torch.nn as nn
 
@@ -43,6 +46,7 @@ logger = logging.getLogger(__name__)
 try:
     import onnx
     import onnxruntime as ort
+
     HAS_ONNX = True
     HAS_ORT = True
 except ImportError:
@@ -50,10 +54,7 @@ except ImportError:
     HAS_ORT = False
 
 EXPORT_DIR = PROJECT_ROOT / "deployment" / "exports"
-# Updated: use Step6 checkpoint (best validated)
-BEST_CHECKPOINT = (
-    PROJECT_ROOT / "experiments" / "phase2_step6_targeted_crm_full" / "best_checkpoint.pt"
-)
+BEST_CHECKPOINT = PHASE3_V2_CHECKPOINT
 ONNX_PATH = EXPORT_DIR / "cnn_gru_mask.onnx"  # Updated filename for mask model
 
 # Fixed T for export (used only if dynamic axes fail; dynamic is preferred)
@@ -96,9 +97,7 @@ def export_to_onnx(
         If model state_dict mismatch is detected.
     """
     if not HAS_ONNX:
-        raise ImportError(
-            "ONNX export requires 'onnx'. Install with: pip install onnx"
-        )
+        raise ImportError("ONNX export requires 'onnx'. Install with: pip install onnx")
 
     # Updated: use mask model (LightweightCNNGRUMaskModel)
     from src.models.cnn_gru_mask import LightweightCNNGRUMaskModel
@@ -115,7 +114,7 @@ def export_to_onnx(
         raise RuntimeError("Checkpoint is missing 'model_state_dict'.")
 
     model = LightweightCNNGRUMaskModel()
-    model.load_state_dict(checkpoint["model_state_dict"])
+    model.load_state_dict(checkpoint["model_state_dict"], strict=True)
 
     # Verify parameter count — architecture must be unchanged
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -126,8 +125,7 @@ def export_to_onnx(
 
     # Clone params to verify export doesn't mutate them
     params_before = {
-        name: param.clone().detach()
-        for name, param in model.named_parameters()
+        name: param.clone().detach() for name, param in model.named_parameters()
     }
 
     model.eval()
@@ -169,7 +167,8 @@ def export_to_onnx(
     file_size = output_path.stat().st_size
     logger.info(
         "ONNX export complete: %s (%.1f KB)",
-        output_path, file_size / 1024.0,
+        output_path,
+        file_size / 1024.0,
     )
     return output_path
 
@@ -247,6 +246,7 @@ def run_onnx_inference(
         )
 
     import numpy as np
+
     session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
     input_np = input_tensor.cpu().numpy().astype(np.float32)
     outputs = session.run(
@@ -290,7 +290,7 @@ def compare_pytorch_onnx(
     # Load PyTorch model
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     model = LightweightCNNGRUMaskModel()
-    model.load_state_dict(checkpoint["model_state_dict"])
+    model.load_state_dict(checkpoint["model_state_dict"], strict=True)
     model.eval()
 
     # Fixed deterministic input
@@ -310,8 +310,12 @@ def compare_pytorch_onnx(
         "onnx_output_shape": tuple(ort_enhanced.shape),
         "max_abs_diff_enhanced": max_diff_enh,
         "max_abs_diff_logits": max_diff_logits,
-        "allclose_enhanced": bool(torch.allclose(pt_enhanced, ort_enhanced, atol=atol, rtol=rtol)),
-        "allclose_logits": bool(torch.allclose(pt_logits, ort_logits, atol=atol, rtol=rtol)),
+        "allclose_enhanced": bool(
+            torch.allclose(pt_enhanced, ort_enhanced, atol=atol, rtol=rtol)
+        ),
+        "allclose_logits": bool(
+            torch.allclose(pt_logits, ort_logits, atol=atol, rtol=rtol)
+        ),
         "atol": atol,
         "rtol": rtol,
     }

@@ -52,13 +52,42 @@ class PerformanceEvaluationPage {
   }
 
   renderQualityMetrics(data) {
-    if (!data || !data.available) return;
+    if (!data) return;
+    if (!data.available) {
+      const status = document.getElementById('evalQualityStatus');
+      if (status) {
+        status.textContent = 'Current evaluation unavailable';
+        status.title = data.reason || '';
+      }
+      [
+        'evalSampleCount', 'evalTimestamp',
+        'evalSnrNoisy', 'evalSnrEnhanced', 'evalSnrDelta',
+        'evalPesqNoisy', 'evalPesqEnhanced', 'evalPesqDelta',
+        'evalStoiNoisy', 'evalStoiEnhanced', 'evalStoiDelta',
+        'evalClassAccuracy', 'evalClassRatio',
+        'accStationary', 'accBabble', 'accTransient',
+      ].forEach(id => {
+        const element = document.getElementById(id);
+        if (element) element.textContent = '--';
+      });
+      ['barSnrNoisy', 'barSnrEnhanced', 'barPesqNoisy', 'barPesqEnhanced', 'barStoiNoisy', 'barStoiEnhanced']
+        .forEach(id => {
+          const bar = document.getElementById(id);
+          if (bar) bar.style.width = '0%';
+        });
+      return;
+    }
 
     // Sample count & header
     const elSampleCount = document.getElementById('evalSampleCount');
     const elEvalTimestamp = document.getElementById('evalTimestamp');
-    if (elSampleCount) elSampleCount.textContent = `${data.samples || 202} Samples (Held-Out Test Set)`;
-    if (elEvalTimestamp) elEvalTimestamp.textContent = data.timestamp || '2026-09-27';
+    const elQualityStatus = document.getElementById('evalQualityStatus');
+    if (elSampleCount) elSampleCount.textContent = `${data.samples} samples`;
+    if (elEvalTimestamp) elEvalTimestamp.textContent = data.timestamp || '--';
+    if (elQualityStatus) {
+      elQualityStatus.textContent = 'Current held-out evaluation';
+      elQualityStatus.removeAttribute('title');
+    }
 
     // 1. SNR Metrics
     if (data.snr_db) {
@@ -120,12 +149,12 @@ class PerformanceEvaluationPage {
       if (elRatio) elRatio.textContent = `${c.correct} / ${c.total} Correct Predictions`;
 
       if (c.per_class_accuracy) {
-        const pStat = c.per_class_accuracy.stationary ?? 0.88;
-        const pBab = c.per_class_accuracy.babble ?? 0.72;
-        const pTran = c.per_class_accuracy.transient ?? 0.68;
-        this.setMetricCard('accStationary', `${(pStat * 100).toFixed(0)}%`);
-        this.setMetricCard('accBabble', `${(pBab * 100).toFixed(0)}%`);
-        this.setMetricCard('accTransient', `${(pTran * 100).toFixed(0)}%`);
+        const pStat = c.per_class_accuracy.stationary;
+        const pBab = c.per_class_accuracy['non-stationary'];
+        const pTran = c.per_class_accuracy.impulsive;
+        this.setMetricCard('accStationary', pStat == null ? '--' : `${(pStat * 100).toFixed(0)}%`);
+        this.setMetricCard('accBabble', pBab == null ? '--' : `${(pBab * 100).toFixed(0)}%`);
+        this.setMetricCard('accTransient', pTran == null ? '--' : `${(pTran * 100).toFixed(0)}%`);
       }
     }
 

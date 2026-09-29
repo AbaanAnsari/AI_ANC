@@ -10,6 +10,7 @@ Trains LightweightCNNGRUMaskModel from scratch for 100 epochs on phase3_v2 manif
 - Outputs best_checkpoint.pt, final_checkpoint.pt, config.json, training_history.json, training_history.csv
 - Directory: experiments/phase3_100ep/
 """
+
 from __future__ import annotations
 
 import argparse
@@ -18,7 +19,9 @@ import hashlib
 import json
 import logging
 import os
+import platform
 import sys
+import subprocess
 import time
 from pathlib import Path
 
@@ -28,11 +31,13 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import numpy as np
 import torch
+import yaml
 from torch.utils.data import DataLoader
 
 from src.data.dataset import Phase1Dataset, custom_collate_fn
 from src.models.cnn_gru_mask import LightweightCNNGRUMaskModel
 from src.training.phase3_losses import Phase3MultiTaskLoss
+from src.training.training_config import set_seed
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,20 +46,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger("train_phase3_100ep")
 
+CONFIG_PATH = PROJECT_ROOT / "configs" / "phase3_v2_training.yaml"
+with CONFIG_PATH.open("r", encoding="utf-8") as config_file:
+    PHASE3_CONFIG = yaml.safe_load(config_file)
+
+EXPERIMENT_CONFIG = PHASE3_CONFIG["experiment"]
+TRAINING_CONFIG = PHASE3_CONFIG["training"]
+LOSS_WEIGHTS = PHASE3_CONFIG["loss_weights"]
+DATASET_CONFIG = PHASE3_CONFIG["dataset"]
+
 EXP_DIR = PROJECT_ROOT / "experiments" / "phase3_100ep"
-MANIFEST_DIR = PROJECT_ROOT / "data" / "manifests" / "phase3_v2"
-DATASET_ROOT = PROJECT_ROOT / "data" / "raw" / "dataset"
+MANIFEST_DIR = PROJECT_ROOT / DATASET_CONFIG["manifest_dir"]
+DATASET_ROOT = PROJECT_ROOT / DATASET_CONFIG["root"]
 
 TRAIN_MANIFEST = MANIFEST_DIR / "train_manifest.jsonl"
 VAL_MANIFEST = MANIFEST_DIR / "val_manifest.jsonl"
 TEST_MANIFEST = MANIFEST_DIR / "test_manifest.jsonl"
 
-BATCH_SIZE = 16
-LR = 1e-3
-WEIGHT_DECAY = 1e-4
-GRAD_CLIP = 5.0
-DEFAULT_EPOCHS = 100
-SEED = 20260929
+BATCH_SIZE = int(TRAINING_CONFIG["batch_size"])
+LR = float(TRAINING_CONFIG["learning_rate"])
+WEIGHT_DECAY = float(TRAINING_CONFIG["weight_decay"])
+GRAD_CLIP = float(TRAINING_CONFIG["gradient_clip_norm"])
+DEFAULT_EPOCHS = int(TRAINING_CONFIG["epochs"])
+SEED = int(TRAINING_CONFIG["seed"])
+DATASET_SEED = int(TRAINING_CONFIG["dataset_seed"])
 
 
 def fingerprint_sample(sample: dict) -> str:
@@ -62,27 +77,73 @@ def fingerprint_sample(sample: dict) -> str:
     return hashlib.sha256(arr.tobytes()).hexdigest()[:12]
 
 
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def git_provenance() -> tuple[str | None, bool | None]:
+    commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return (
+        commit.stdout.strip() if commit.returncode == 0 else None,
+        bool(status.stdout.strip()) if status.returncode == 0 else None,
+    )
+
+
+def assert_finite_losses(
+    losses: dict[str, torch.Tensor], epoch: int, phase: str
+) -> None:
+    for name, value in losses.items():
+        if not torch.isfinite(value).all():
+            raise FloatingPointError(
+                f"Non-finite {phase} loss {name} at epoch {epoch}: {value}"
+            )
+
+
 def run_training_100ep(epochs: int = DEFAULT_EPOCHS, device_str: str = "cpu"):
+    set_seed(SEED)
     EXP_DIR.mkdir(parents=True, exist_ok=True)
     device = torch.device(device_str)
 
     logger.info("=" * 75)
     logger.info("STARTING PHASE 3 100-EPOCH RETRAINING FROM SCRATCH")
     logger.info("Experiment Directory: %s", EXP_DIR)
-    logger.info("Device: %s | Epochs: %d | Batch Size: %d | Seed: %d", device, epochs, BATCH_SIZE, SEED)
+    logger.info(
+        "Device: %s | Epochs: %d | Batch Size: %d | Seed: %d",
+        device,
+        epochs,
+        BATCH_SIZE,
+        SEED,
+    )
     logger.info("=" * 75)
 
     # 1. Datasets and Loaders
     train_ds = Phase1Dataset(
         manifest_path=TRAIN_MANIFEST,
         dataset_root=DATASET_ROOT,
-        seed=SEED,
+        seed=DATASET_SEED,
         is_validation=False,
     )
     val_ds = Phase1Dataset(
         manifest_path=VAL_MANIFEST,
         dataset_root=DATASET_ROOT,
-        seed=SEED,
+        seed=DATASET_SEED,
         is_validation=True,
     )
 
@@ -94,43 +155,57 @@ def run_training_100ep(epochs: int = DEFAULT_EPOCHS, device_str: str = "cpu"):
         batch_size=BATCH_SIZE,
         shuffle=True,
         collate_fn=custom_collate_fn,
-        num_workers=0,
+        num_workers=int(TRAINING_CONFIG["num_workers"]),
+        generator=torch.Generator().manual_seed(SEED),
     )
     val_loader = DataLoader(
         val_ds,
         batch_size=BATCH_SIZE,
         shuffle=False,
         collate_fn=custom_collate_fn,
-        num_workers=0,
+        num_workers=int(TRAINING_CONFIG["num_workers"]),
     )
 
     # 2. Model: LightweightCNNGRUMaskModel (70,789 trainable params)
     model = LightweightCNNGRUMaskModel().to(device)
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    logger.info("Model parameters: %d total, %d trainable", total_params, trainable_params)
-    assert trainable_params == 70789, f"Expected 70,789 trainable params, got {trainable_params}"
+    logger.info(
+        "Model parameters: %d total, %d trainable", total_params, trainable_params
+    )
+    assert (
+        trainable_params == 70789
+    ), f"Expected 70,789 trainable params, got {trainable_params}"
 
     # 3. Loss & Optimizer (Balanced composite)
-    multi_loss = Phase3MultiTaskLoss(
-        enhancement_weight=1.0,
-        classification_weight=0.10,
-        mask_weight=0.30,
-        recon_weight=0.15,
-        sisdr_weight=0.30,
-        mrstft_weight=0.15,
-        energy_weight=0.10,
-    ).to(device)
+    multi_loss = Phase3MultiTaskLoss(**LOSS_WEIGHTS).to(device)
 
+    if TRAINING_CONFIG["optimizer"] != "AdamW":
+        raise ValueError(
+            f"Unsupported Phase 3 optimizer: {TRAINING_CONFIG['optimizer']}"
+        )
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
+    scheduler_config = TRAINING_CONFIG["scheduler"]
+    if scheduler_config["type"] != "ReduceLROnPlateau":
+        raise ValueError(f"Unsupported Phase 3 scheduler: {scheduler_config['type']}")
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=3, min_lr=1e-6
+        optimizer,
+        mode=scheduler_config["mode"],
+        factor=float(scheduler_config["factor"]),
+        patience=int(scheduler_config["patience"]),
+        min_lr=float(scheduler_config["min_lr"]),
     )
 
-    # Save experiment config (Section 9)
+    manifest_hashes = {
+        "train": sha256_file(TRAIN_MANIFEST),
+        "val": sha256_file(VAL_MANIFEST),
+        "test": sha256_file(TEST_MANIFEST),
+    }
+    git_commit, git_dirty = git_provenance()
+    config_path_relative = CONFIG_PATH.relative_to(PROJECT_ROOT).as_posix()
     config_dict = {
-        "experiment_id": "phase3_100ep",
-        "experiment_name": "Phase 3 100-Epoch Retraining & Revalidation",
+        "experiment_id": EXPERIMENT_CONFIG["id"],
+        "experiment_name": EXPERIMENT_CONFIG["name"],
         "model_architecture": "LightweightCNNGRUMaskModel",
         "trainable_parameters": trainable_params,
         "total_parameters": total_params,
@@ -140,26 +215,46 @@ def run_training_100ep(epochs: int = DEFAULT_EPOCHS, device_str: str = "cpu"):
         "weight_decay": WEIGHT_DECAY,
         "gradient_clip_norm": GRAD_CLIP,
         "random_seed": SEED,
+        "dataset_seed": DATASET_SEED,
+        "num_workers": int(TRAINING_CONFIG["num_workers"]),
+        "mixed_precision": bool(TRAINING_CONFIG["mixed_precision"]),
+        "optimizer": TRAINING_CONFIG["optimizer"],
+        "scheduler": scheduler_config,
+        "epoch_seed_scheme": "sha256(global_seed:epoch:index)",
+        "phase3_config_path": config_path_relative,
+        "phase3_config_sha256": sha256_file(CONFIG_PATH),
+        "git_commit": git_commit,
+        "git_working_tree_dirty": git_dirty,
+        "software_versions": {
+            "python": platform.python_version(),
+            "pytorch": torch.__version__,
+            "numpy": np.__version__,
+            "cuda": torch.version.cuda,
+        },
+        "training_hardware": {
+            "device": str(device),
+            "platform": platform.platform(),
+            "processor": platform.processor(),
+            "cuda_available": torch.cuda.is_available(),
+            "cuda_device": (
+                torch.cuda.get_device_name(0) if device.type == "cuda" else None
+            ),
+        },
         "manifests": {
-            "train": str(TRAIN_MANIFEST),
-            "val": str(VAL_MANIFEST),
-            "test": str(TEST_MANIFEST),
+            "train": TRAIN_MANIFEST.relative_to(PROJECT_ROOT).as_posix(),
+            "val": VAL_MANIFEST.relative_to(PROJECT_ROOT).as_posix(),
+            "test": TEST_MANIFEST.relative_to(PROJECT_ROOT).as_posix(),
         },
-        "loss_weights": {
-            "enhancement_weight": 1.0,
-            "classification_weight": 0.10,
-            "mask_weight": 0.30,
-            "recon_weight": 0.15,
-            "sisdr_weight": 0.30,
-            "mrstft_weight": 0.15,
-            "energy_weight": 0.10,
-        },
+        "manifest_sha256": manifest_hashes,
+        "loss_weights": LOSS_WEIGHTS,
     }
     with open(EXP_DIR / "config.json", "w") as f:
         json.dump(config_dict, f, indent=2)
 
     # Copy dataset statistics report as dataset_audit.json
-    stats_src = PROJECT_ROOT / "experiments" / "phase3_v2" / "dataset_statistics_report.json"
+    stats_src = (
+        PROJECT_ROOT / "experiments" / "phase3_v2" / "dataset_statistics_report.json"
+    )
     if stats_src.exists():
         with open(stats_src) as f:
             d_audit = json.load(f)
@@ -214,10 +309,13 @@ def run_training_100ep(epochs: int = DEFAULT_EPOCHS, device_str: str = "cpu"):
                 noise_class_label=noise_lbl,
                 clean_waveform=clean_wave,
             )
+            assert_finite_losses(losses, epoch, "training")
 
             total_l = losses["total_loss"]
             total_l.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=GRAD_CLIP)
+            torch.nn.utils.clip_grad_norm_(
+                model.parameters(), max_norm=GRAD_CLIP, error_if_nonfinite=True
+            )
             optimizer.step()
 
             train_loss_sum += total_l.item()
@@ -254,6 +352,7 @@ def run_training_100ep(epochs: int = DEFAULT_EPOCHS, device_str: str = "cpu"):
                     noise_class_label=noise_lbl,
                     clean_waveform=clean_wave,
                 )
+                assert_finite_losses(losses, epoch, "validation")
 
                 val_loss_sum += losses["total_loss"].item()
                 val_enh_sum += losses["enhancement_loss"].item()
@@ -346,12 +445,26 @@ def run_training_100ep(epochs: int = DEFAULT_EPOCHS, device_str: str = "cpu"):
         star = "*" if is_best else " "
         logger.info(
             "Epoch %3d/%3d [%4.1fs] | TrLoss: %+7.4f (enh: %+7.4f) | ValLoss: %+7.4f (enh: %+7.4f, acc: %4.1f%%) | Best: %+7.4f (Ep %d) | Hash0: %s %s",
-            epoch, epochs, epoch_time, mean_tr_loss, mean_tr_enh, mean_val_loss, mean_val_enh,
-            val_acc * 100.0, best_val_loss, best_epoch, fp0, star
+            epoch,
+            epochs,
+            epoch_time,
+            mean_tr_loss,
+            mean_tr_enh,
+            mean_val_loss,
+            mean_val_enh,
+            val_acc * 100.0,
+            best_val_loss,
+            best_epoch,
+            fp0,
+            star,
         )
 
     logger.info("=" * 75)
-    logger.info("100-EPOCH TRAINING COMPLETE! Best val loss: %f at epoch %d", best_val_loss, best_epoch)
+    logger.info(
+        "100-EPOCH TRAINING COMPLETE! Best val loss: %f at epoch %d",
+        best_val_loss,
+        best_epoch,
+    )
     logger.info("Saved best checkpoint to %s", EXP_DIR / "best_checkpoint.pt")
     logger.info("Saved final checkpoint to %s", EXP_DIR / "final_checkpoint.pt")
     logger.info("=" * 75)

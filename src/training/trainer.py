@@ -11,6 +11,7 @@ Design principles:
 - All model parameters preserved at 70,789 trainable
 - No training happens during import
 """
+
 from __future__ import annotations
 
 import logging
@@ -37,6 +38,7 @@ EpochMetrics = Dict[str, float]
 # ---------------------------------------------------------------------------
 # Trainer
 # ---------------------------------------------------------------------------
+
 
 class Trainer:
     """
@@ -138,8 +140,9 @@ class Trainer:
         self.model.train()
 
         # Propagate current epoch to dataset for deterministic epoch-varying mixture generation
-        if hasattr(self.train_loader.dataset, "set_epoch"):
-            self.train_loader.dataset.set_epoch(epoch)
+        train_dataset = getattr(self.train_loader, "dataset", None)
+        if hasattr(train_dataset, "set_epoch"):
+            train_dataset.set_epoch(epoch)
 
         total_loss_sum = 0.0
         enh_loss_sum = 0.0
@@ -150,12 +153,16 @@ class Trainer:
             # Move tensors to device
             noisy_features = batch["noisy_features"].to(self.device, non_blocking=True)
             target_stft = batch["target_stft"].to(self.device, non_blocking=True)
-            noise_class_label = batch["noise_class_label"].to(self.device, non_blocking=True)
+            noise_class_label = batch["noise_class_label"].to(
+                self.device, non_blocking=True
+            )
 
             self.optimizer.zero_grad(set_to_none=True)
 
             # Forward pass (optionally under AMP context)
-            with torch.amp.autocast(device_type=self.device.type, enabled=self._use_amp):
+            with torch.amp.autocast(
+                device_type=self.device.type, enabled=self._use_amp
+            ):
                 enhanced_output, classification_logits = self.model(noisy_features)
                 loss_dict = self.loss_fn(
                     enhanced_output,
@@ -163,6 +170,11 @@ class Trainer:
                     target_stft,
                     noise_class_label,
                 )
+                for loss_name, loss_value in loss_dict.items():
+                    if not torch.isfinite(loss_value).all():
+                        raise FloatingPointError(
+                            f"Non-finite training loss {loss_name} at epoch {epoch}, batch {batch_idx + 1}"
+                        )
                 total_loss = loss_dict["total_loss"]
 
             # Backward
@@ -173,6 +185,7 @@ class Trainer:
             torch.nn.utils.clip_grad_norm_(
                 self.model.parameters(),
                 max_norm=self.config.gradient_clip_norm,
+                error_if_nonfinite=True,
             )
 
             # Optimizer step
@@ -188,7 +201,9 @@ class Trainer:
             if (batch_idx + 1) % self.config.log_frequency == 0:
                 logger.info(
                     "Epoch %d | Batch %d/%d | loss=%.6f | enh=%.6f | cls=%.6f",
-                    epoch, batch_idx + 1, len(self.train_loader),
+                    epoch,
+                    batch_idx + 1,
+                    len(self.train_loader),
                     loss_dict["total_loss"].item(),
                     loss_dict["enhancement_loss"].item(),
                     loss_dict["classification_loss"].item(),
@@ -227,8 +242,9 @@ class Trainer:
         self.model.eval()
 
         # Validation data must remain deterministic and stable across all epochs
-        if hasattr(self.val_loader.dataset, "set_epoch"):
-            self.val_loader.dataset.set_epoch(0)
+        val_dataset = getattr(self.val_loader, "dataset", None)
+        if hasattr(val_dataset, "set_epoch"):
+            val_dataset.set_epoch(0)
 
         total_loss_sum = 0.0
         enh_loss_sum = 0.0
@@ -237,7 +253,9 @@ class Trainer:
 
         with torch.no_grad():
             for batch in self.val_loader:
-                noisy_features = batch["noisy_features"].to(self.device, non_blocking=True)
+                noisy_features = batch["noisy_features"].to(
+                    self.device, non_blocking=True
+                )
                 target_stft = batch["target_stft"].to(self.device, non_blocking=True)
                 noise_class_label = batch["noise_class_label"].to(
                     self.device, non_blocking=True
@@ -250,6 +268,11 @@ class Trainer:
                     target_stft,
                     noise_class_label,
                 )
+                for loss_name, loss_value in loss_dict.items():
+                    if not torch.isfinite(loss_value).all():
+                        raise FloatingPointError(
+                            f"Non-finite validation loss {loss_name}"
+                        )
 
                 total_loss_sum += loss_dict["total_loss"].item()
                 enh_loss_sum += loss_dict["enhancement_loss"].item()
@@ -327,7 +350,8 @@ class Trainer:
                     )
                     logger.info(
                         "Epoch %d | New best val_total_loss=%.6f — saved best checkpoint.",
-                        epoch, val_total_loss,
+                        epoch,
+                        val_total_loss,
                     )
 
             # Save last checkpoint
@@ -352,7 +376,8 @@ class Trainer:
 
             logger.info(
                 "Epoch %d/%d | train_loss=%.6f | val_loss=%.6f | lr=%.2e | %.1fs",
-                epoch, n_epochs,
+                epoch,
+                n_epochs,
                 train_metrics["train_total_loss"],
                 val_metrics.get("val_total_loss", float("nan")),
                 current_lr,
@@ -362,7 +387,8 @@ class Trainer:
         total_duration = time.perf_counter() - run_start
         logger.info(
             "Training complete. Total time: %.1fs. Best val_total_loss: %.6f",
-            total_duration, self._best_val_loss,
+            total_duration,
+            self._best_val_loss,
         )
         return self._history
 
@@ -423,7 +449,7 @@ class Trainer:
         Returns the epoch stored in the checkpoint.
         """
         checkpoint = self.load_checkpoint(filepath)
-        self.model.load_state_dict(checkpoint["model_state_dict"])
+        self.model.load_state_dict(checkpoint["model_state_dict"], strict=True)
         self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         self._best_val_loss = checkpoint.get("best_val_loss", float("inf"))
@@ -442,6 +468,7 @@ class Trainer:
 # ---------------------------------------------------------------------------
 # Convenience factory
 # ---------------------------------------------------------------------------
+
 
 def create_trainer(
     model: nn.Module,

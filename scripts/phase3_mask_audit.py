@@ -14,6 +14,7 @@ and analyzes:
 
 Outputs JSON to experiments/phase3_analysis/mask_distribution.json
 """
+
 from __future__ import annotations
 
 import json
@@ -46,7 +47,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger("mask_audit")
 
-CHECKPOINT = PROJECT_ROOT / "experiments" / "phase2_step6_targeted_crm_full" / "best_checkpoint.pt"
+CHECKPOINT = (
+    PROJECT_ROOT
+    / "experiments"
+    / "phase2_step6_targeted_crm_full"
+    / "best_checkpoint.pt"
+)
 VAL_MANIFEST = PROJECT_ROOT / "data" / "manifests" / "val_manifest.jsonl"
 DATASET_ROOT = PROJECT_ROOT / "data" / "raw" / "dataset"
 OUTPUT_DIR = PROJECT_ROOT / "experiments" / "phase3_analysis"
@@ -79,15 +85,18 @@ def main():
     # Load model
     ckpt = torch.load(CHECKPOINT, map_location="cpu", weights_only=False)
     model = LightweightCNNGRUMaskModel()
-    model.load_state_dict(ckpt["model_state_dict"])
+    model.load_state_dict(ckpt["model_state_dict"], strict=True)
     model.eval()
     model.to(DEVICE)
     logger.info("Loaded Step 6 checkpoint (epoch %s)", ckpt.get("epoch", "?"))
 
     # Load validation data
     val_loader = create_dataloader(
-        VAL_MANIFEST, DATASET_ROOT,
-        batch_size=BATCH_SIZE, shuffle=False, seed=SEED,
+        VAL_MANIFEST,
+        DATASET_ROOT,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        seed=SEED,
     )
 
     # Collect statistics
@@ -128,9 +137,9 @@ def main():
 
             # Energy
             target_ri = convert_complex_stft_to_real_imag(target_stft)
-            all_enh_energy.append(torch.mean(enhanced_output ** 2).item())
-            all_clean_energy.append(torch.mean(target_ri ** 2).item())
-            all_noisy_energy.append(torch.mean(noisy_features ** 2).item())
+            all_enh_energy.append(torch.mean(enhanced_output**2).item())
+            all_clean_energy.append(torch.mean(target_ri**2).item())
+            all_noisy_energy.append(torch.mean(noisy_features**2).item())
 
             if (batch_idx + 1) % 5 == 0:
                 logger.info("Processed %d/%d batches", batch_idx + 1, MAX_BATCHES)
@@ -196,7 +205,8 @@ def main():
             "mean_enhanced_energy": float(np.mean(all_enh_energy)),
             "mean_clean_energy": float(np.mean(all_clean_energy)),
             "mean_noisy_energy": float(np.mean(all_noisy_energy)),
-            "enhanced_clean_ratio": float(np.mean(all_enh_energy)) / (float(np.mean(all_clean_energy)) + 1e-10),
+            "enhanced_clean_ratio": float(np.mean(all_enh_energy))
+            / (float(np.mean(all_clean_energy)) + 1e-10),
         },
     }
 
@@ -212,9 +222,15 @@ def main():
     print(f"  Values analyzed: {len(pred_r):,}")
     print()
     print("  PREDICTED MASK (tanh-bounded):")
-    print(f"    Real: [{pred_r.min():.4f}, {pred_r.max():.4f}] mean={pred_r.mean():.4f} std={pred_r.std():.4f}")
-    print(f"    Imag: [{pred_i.min():.4f}, {pred_i.max():.4f}] mean={pred_i.mean():.4f} std={pred_i.std():.4f}")
-    print(f"    Saturation (|M| > {sat_threshold}): real={sat_frac_r:.2%}, imag={sat_frac_i:.2%}")
+    print(
+        f"    Real: [{pred_r.min():.4f}, {pred_r.max():.4f}] mean={pred_r.mean():.4f} std={pred_r.std():.4f}"
+    )
+    print(
+        f"    Imag: [{pred_i.min():.4f}, {pred_i.max():.4f}] mean={pred_i.mean():.4f} std={pred_i.std():.4f}"
+    )
+    print(
+        f"    Saturation (|M| > {sat_threshold}): real={sat_frac_r:.2%}, imag={sat_frac_i:.2%}"
+    )
     print()
     print("  TARGET MASK (raw, unclamped S/X):")
     print(f"    Real: [{raw_r.min():.4f}, {raw_r.max():.4f}] mean={raw_r.mean():.4f}")
@@ -229,9 +245,13 @@ def main():
     ratio = float(np.mean(all_enh_energy)) / (float(np.mean(all_clean_energy)) + 1e-10)
     print(f"    Enhanced/Clean energy: {ratio:.4f}")
     if ratio < 0.9:
-        print("    ⚠ Enhanced energy is LOWER than clean — mask may be attenuating speech!")
+        print(
+            "    ⚠ Enhanced energy is LOWER than clean — mask may be attenuating speech!"
+        )
     elif ratio > 1.1:
-        print("    ⚠ Enhanced energy is HIGHER than clean — possible amplification artifact!")
+        print(
+            "    ⚠ Enhanced energy is HIGHER than clean — possible amplification artifact!"
+        )
     else:
         print("    ✓ Energy ratio is within acceptable range.")
     print()

@@ -14,7 +14,7 @@
 class AudioEngineService {
   constructor() {
     this.apiBase = window.location.origin.includes('http') ? window.location.origin : 'http://127.0.0.1:8000';
-    
+
     // Immutable Engine Constants
     this.SAMPLE_RATE = 16000;
     this.BLOCK_SIZE = 256;
@@ -271,7 +271,7 @@ class AudioEngineService {
   // Authoritative Metrics
   async loadQualityMetrics() {
     try {
-      const res = await fetch(`${this.apiBase}/api/metrics/quality`);
+      const res = await fetch(`${this.apiBase}/api/metrics/quality`, { cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       this.latestMetrics = data;

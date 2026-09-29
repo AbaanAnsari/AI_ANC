@@ -11,6 +11,7 @@ Design rules:
   - STOI/PESQ report UNAVAILABLE if the package is missing.
   - Deterministic: same checkpoint + same seed → same results.
 """
+
 from __future__ import annotations
 
 import copy
@@ -43,6 +44,7 @@ SAMPLE_RATE = 16_000
 # ---------------------------------------------------------------------------
 # Checkpoint loading
 # ---------------------------------------------------------------------------
+
 
 def load_model_from_checkpoint(
     checkpoint_path: str | Path,
@@ -79,7 +81,7 @@ def load_model_from_checkpoint(
         )
 
     model = LightweightCNNTGRUModel()
-    model.load_state_dict(checkpoint["model_state_dict"])
+    model.load_state_dict(checkpoint["model_state_dict"], strict=True)
 
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     if trainable_params != EXPECTED_PARAM_COUNT:
@@ -102,6 +104,7 @@ def load_model_from_checkpoint(
 # ---------------------------------------------------------------------------
 # Core evaluation loop
 # ---------------------------------------------------------------------------
+
 
 def evaluate(
     model: nn.Module,
@@ -139,8 +142,7 @@ def evaluate(
 
     # Clone params to verify they are unchanged after evaluation
     params_before = {
-        name: param.clone().detach()
-        for name, param in model.named_parameters()
+        name: param.clone().detach() for name, param in model.named_parameters()
     }
 
     total_loss_sum = 0.0
@@ -218,7 +220,9 @@ def evaluate(
                         noisy_wav = _to_numpy_wav(batch["m1_waveform"], i)
                     else:
                         # Reconstruct from noisy_features STFT
-                        noisy_feat_np = batch["noisy_features"].cpu().numpy()  # (B, 2, 257, T)
+                        noisy_feat_np = (
+                            batch["noisy_features"].cpu().numpy()
+                        )  # (B, 2, 257, T)
                         n_real = noisy_feat_np[i, 0]  # (257, T)
                         n_imag = noisy_feat_np[i, 1]
                         n_complex = (n_real + 1j * n_imag).astype(np.complex64)
@@ -231,7 +235,9 @@ def evaluate(
                     enhanced_wav = compute_istft(enh_complex, length=len(clean_wav))
 
                     # SNR
-                    snr_res = compute_snr_improvement(clean_wav, noisy_wav, enhanced_wav)
+                    snr_res = compute_snr_improvement(
+                        clean_wav, noisy_wav, enhanced_wav
+                    )
                     input_snr_vals.append(snr_res["input_snr_db"])
                     output_snr_vals.append(snr_res["output_snr_db"])
                     snr_improvement_vals.append(snr_res["snr_improvement"])
@@ -266,12 +272,12 @@ def evaluate(
             break
 
     # Classification metrics
-    assert validate_labels(all_true_labels, {0, 1, 2}), (
-        "True labels contain values outside {0, 1, 2}"
-    )
-    assert validate_labels(all_pred_labels, {0, 1, 2}), (
-        "Predicted labels contain values outside {0, 1, 2}"
-    )
+    assert validate_labels(
+        all_true_labels, {0, 1, 2}
+    ), "True labels contain values outside {0, 1, 2}"
+    assert validate_labels(
+        all_pred_labels, {0, 1, 2}
+    ), "Predicted labels contain values outside {0, 1, 2}"
     cls_metrics = compute_classification_metrics(all_true_labels, all_pred_labels)
 
     # Build result dict
@@ -284,20 +290,36 @@ def evaluate(
         "params_unchanged": params_unchanged,
         # SNR
         "mean_input_snr_db": float(np.mean(input_snr_vals)) if input_snr_vals else None,
-        "mean_output_snr_db": float(np.mean(output_snr_vals)) if output_snr_vals else None,
-        "mean_snr_improvement": float(np.mean(snr_improvement_vals)) if snr_improvement_vals else None,
-        "median_snr_improvement": float(np.median(snr_improvement_vals)) if snr_improvement_vals else None,
-        "std_snr_improvement": float(np.std(snr_improvement_vals)) if snr_improvement_vals else None,
+        "mean_output_snr_db": (
+            float(np.mean(output_snr_vals)) if output_snr_vals else None
+        ),
+        "mean_snr_improvement": (
+            float(np.mean(snr_improvement_vals)) if snr_improvement_vals else None
+        ),
+        "median_snr_improvement": (
+            float(np.median(snr_improvement_vals)) if snr_improvement_vals else None
+        ),
+        "std_snr_improvement": (
+            float(np.std(snr_improvement_vals)) if snr_improvement_vals else None
+        ),
         # STOI
         "stoi_available": stoi_available(),
-        "stoi_unavailable_message": None if stoi_available() else stoi_unavailable_message(),
+        "stoi_unavailable_message": (
+            None if stoi_available() else stoi_unavailable_message()
+        ),
         "mean_noisy_stoi": float(np.mean(noisy_stoi_vals)) if noisy_stoi_vals else None,
-        "mean_enhanced_stoi": float(np.mean(enhanced_stoi_vals)) if enhanced_stoi_vals else None,
+        "mean_enhanced_stoi": (
+            float(np.mean(enhanced_stoi_vals)) if enhanced_stoi_vals else None
+        ),
         # PESQ
         "pesq_available": pesq_available(),
-        "pesq_unavailable_message": None if pesq_available() else pesq_unavailable_message(),
+        "pesq_unavailable_message": (
+            None if pesq_available() else pesq_unavailable_message()
+        ),
         "mean_noisy_pesq": float(np.mean(noisy_pesq_vals)) if noisy_pesq_vals else None,
-        "mean_enhanced_pesq": float(np.mean(enhanced_pesq_vals)) if enhanced_pesq_vals else None,
+        "mean_enhanced_pesq": (
+            float(np.mean(enhanced_pesq_vals)) if enhanced_pesq_vals else None
+        ),
         # Classification
         "classification_accuracy": cls_metrics["accuracy"],
         "per_class_accuracy": cls_metrics["per_class_accuracy"],
@@ -310,8 +332,12 @@ def evaluate(
         "macro_f1": cls_metrics["macro_f1"],
         "class_counts": cls_metrics["class_counts"],
         # SNR distribution summary
-        "snr_distribution_evaluated": sorted(set(round(s, 1) for s in snr_distribution)),
-        "snr_distribution_mean": float(np.mean(snr_distribution)) if snr_distribution else None,
+        "snr_distribution_evaluated": sorted(
+            set(round(s, 1) for s in snr_distribution)
+        ),
+        "snr_distribution_mean": (
+            float(np.mean(snr_distribution)) if snr_distribution else None
+        ),
     }
     return result
 
@@ -319,6 +345,7 @@ def evaluate(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _to_numpy_wav(tensor_or_array, index: int) -> np.ndarray:
     """Extract item i from a batch tensor or list and return float32 numpy array."""
@@ -331,6 +358,7 @@ def _to_numpy_wav(tensor_or_array, index: int) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # Evaluation report printer
 # ---------------------------------------------------------------------------
+
 
 def print_evaluation_report(result: Dict, title: str = "EVALUATION REPORT") -> None:
     """Print a formatted evaluation report."""
@@ -347,12 +375,24 @@ def print_evaluation_report(result: Dict, title: str = "EVALUATION REPORT") -> N
     print(f"    Class loss       : {result['mean_classification_loss']:.6f}")
     print()
     print("  SNR")
-    inp = result['mean_input_snr_db']
-    out = result['mean_output_snr_db']
-    imp = result['mean_snr_improvement']
-    print(f"    Input SNR   : {inp:.2f} dB" if inp is not None else "    Input SNR   : N/A")
-    print(f"    Output SNR  : {out:.2f} dB" if out is not None else "    Output SNR  : N/A")
-    print(f"    SNR Improv. : {imp:.2f} dB" if imp is not None else "    SNR Improv. : N/A")
+    inp = result["mean_input_snr_db"]
+    out = result["mean_output_snr_db"]
+    imp = result["mean_snr_improvement"]
+    print(
+        f"    Input SNR   : {inp:.2f} dB"
+        if inp is not None
+        else "    Input SNR   : N/A"
+    )
+    print(
+        f"    Output SNR  : {out:.2f} dB"
+        if out is not None
+        else "    Output SNR  : N/A"
+    )
+    print(
+        f"    SNR Improv. : {imp:.2f} dB"
+        if imp is not None
+        else "    SNR Improv. : N/A"
+    )
     print()
     print("  STOI")
     if result["stoi_available"]:

@@ -15,6 +15,7 @@ Usage:
     enhanced_stft, logits, mask = wrapper.infer(noisy_features)
     noise_class, confidence = wrapper.classify(logits)
 """
+
 from __future__ import annotations
 
 import logging
@@ -41,6 +42,7 @@ NOISE_CLASS_NAMES = {0: "stationary", 1: "non-stationary", 2: "impulsive"}
 # ---------------------------------------------------------------------------
 # Inference Wrapper
 # ---------------------------------------------------------------------------
+
 
 class AIInferenceWrapper:
     """
@@ -89,10 +91,11 @@ class AIInferenceWrapper:
         # Verify parameter count
         trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
         if trainable != EXPECTED_PARAM_COUNT:
-            logger.warning(
-                "Parameter count mismatch: expected %d, got %d. "
-                "Architecture may have changed.",
-                EXPECTED_PARAM_COUNT, trainable,
+            raise RuntimeError(
+                "Production model parameter count mismatch: expected %d, got %d. "
+                "Refusing to initialize inference with an unvalidated architecture.",
+                EXPECTED_PARAM_COUNT,
+                trainable,
             )
         self.param_count = trainable
 
@@ -141,7 +144,9 @@ class AIInferenceWrapper:
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
         if device == "auto":
-            resolved_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            resolved_device = torch.device(
+                "cuda" if torch.cuda.is_available() else "cpu"
+            )
         else:
             resolved_device = torch.device(device)
 
@@ -158,7 +163,7 @@ class AIInferenceWrapper:
             )
 
         model = LightweightCNNGRUMaskModel()
-        model.load_state_dict(checkpoint["model_state_dict"])
+        model.load_state_dict(checkpoint["model_state_dict"], strict=True)
         model.eval()
 
         logger.info(
@@ -233,17 +238,23 @@ class AIInferenceWrapper:
                 # 7-frame temporal context buffer [t-3, t-2, t-1, t, t+1, t+2, t+3]
                 # Convolutional feature extraction across all 7 frames
                 c1 = self.model.conv1(x)  # (B, 16, 129, 7)
-                c2 = self.model.conv2(c1) # (B, 32, 65, 7)
-                c3 = self.model.conv3(c2) # (B, 16, 33, 7)
+                c2 = self.model.conv2(c1)  # (B, 32, 65, 7)
+                c3 = self.model.conv3(c2)  # (B, 16, 33, 7)
 
                 # Extract unpadded center frame at index 3 (frame t)
                 c3_center = c3[:, :, :, 3:4]  # (B, 16, 33, 1)
-                c3_flat = c3_center.permute(0, 3, 1, 2).contiguous().view(B, 1, -1)  # (B, 1, 528)
+                c3_flat = (
+                    c3_center.permute(0, 3, 1, 2).contiguous().view(B, 1, -1)
+                )  # (B, 1, 528)
                 proj = self.model.proj(c3_flat)  # (B, 1, 32)
 
                 # Recurrent GRU step
                 if stateful:
-                    h_in = self._hidden_state.to(self.device) if self._hidden_state is not None else None
+                    h_in = (
+                        self._hidden_state.to(self.device)
+                        if self._hidden_state is not None
+                        else None
+                    )
                     gru_out, next_h = self.model.gru(proj, h_in)
                     self._hidden_state = next_h.detach()
                 else:
@@ -251,7 +262,9 @@ class AIInferenceWrapper:
 
                 # Enhancement head applied to center frame noisy STFT
                 noisy_center = x[:, :, :, 3:4]  # (B, 2, 257, 1)
-                enhanced_tensor, mask_tensor = self.model.enhancement_head(gru_out, noisy_center)
+                enhanced_tensor, mask_tensor = self.model.enhancement_head(
+                    gru_out, noisy_center
+                )
 
                 # Classification temporal context: maintain rolling buffer of GRU representations
                 self._gru_history.append(gru_out.detach().squeeze(0))  # (1, 48)
@@ -261,12 +274,18 @@ class AIInferenceWrapper:
                 # Temporal mean pooling over history window (matches training mean-pool)
                 gru_seq = torch.cat(self._gru_history, dim=0).unsqueeze(0)  # (1, W, 48)
                 pooled = torch.mean(gru_seq, dim=1)  # (1, 48)
-                logits_tensor = self.model.classification_head.classifier(pooled)  # (1, 3)
+                logits_tensor = self.model.classification_head.classifier(
+                    pooled
+                )  # (1, 3)
 
             elif T == 1:
                 # Single-frame legacy path
                 if stateful:
-                    h_in = self._hidden_state.to(self.device) if self._hidden_state is not None else None
+                    h_in = (
+                        self._hidden_state.to(self.device)
+                        if self._hidden_state is not None
+                        else None
+                    )
                     enhanced_tensor, logits_tensor, mask_tensor, next_h = self.model(
                         x, hidden_state=h_in, return_hidden=True
                     )
@@ -288,7 +307,7 @@ class AIInferenceWrapper:
 
         t_end = time.perf_counter()
         self._n_inferences += 1
-        self._total_inference_time_s += (t_end - t_start)
+        self._total_inference_time_s += t_end - t_start
 
         return enhanced_np, logits_np, mask_np
 
@@ -351,7 +370,9 @@ class AIInferenceWrapper:
             self._active_class = raw_class
         else:
             alpha = self.classifier_smoothing_alpha
-            self._smoothed_probs = alpha * raw_probs + (1.0 - alpha) * self._smoothed_probs
+            self._smoothed_probs = (
+                alpha * raw_probs + (1.0 - alpha) * self._smoothed_probs
+            )
 
         # Renormalize smoothed probabilities
         s_sum = float(np.sum(self._smoothed_probs))
@@ -368,7 +389,10 @@ class AIInferenceWrapper:
                 if self._switch_counter >= self.hysteresis_frames:
                     logger.info(
                         "Classifier switched active class: %d -> %d (conf=%.3f, after %d frames)",
-                        self._active_class, candidate_class, candidate_conf, self._switch_counter,
+                        self._active_class,
+                        candidate_class,
+                        candidate_conf,
+                        self._switch_counter,
                     )
                     self._active_class = candidate_class
                     self._class_switch_count += 1
@@ -379,7 +403,13 @@ class AIInferenceWrapper:
             self._switch_counter = 0
 
         active_conf = float(self._smoothed_probs[self._active_class])
-        return self._active_class, active_conf, raw_probs, self._smoothed_probs.copy(), self._class_switch_count
+        return (
+            self._active_class,
+            active_conf,
+            raw_probs,
+            self._smoothed_probs.copy(),
+            self._class_switch_count,
+        )
 
     @property
     def switch_count(self) -> int:

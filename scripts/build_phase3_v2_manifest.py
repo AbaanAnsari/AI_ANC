@@ -9,17 +9,19 @@ Guarantees:
 4. Stratified noise representation across all classes (stationary, non-stationary, impulsive).
 5. Deterministic generation using fixed SEED=20260929.
 """
+
 from __future__ import annotations
 
 import hashlib
 import json
-import os
+import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
 SEED = 20260929
-OUTPUT_DIR = Path("data/manifests/phase3_v2")
-MASTER_MANIFEST = Path("data/manifests/dataset_manifest.jsonl")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+OUTPUT_DIR = PROJECT_ROOT / "data" / "manifests" / "phase3_v2"
+MASTER_MANIFEST = PROJECT_ROOT / "data" / "manifests" / "dataset_manifest.jsonl"
 
 
 def deterministic_key(s: str) -> int:
@@ -28,13 +30,55 @@ def deterministic_key(s: str) -> int:
 
 
 def get_speaker_id(record: dict) -> str:
-    src = record["source_path"]
-    base = os.path.basename(src)
-    if "-" in base:
-        return base.split("-")[0]
-    elif "_" in base:
-        return base.split("_")[0]
-    return "synthetic"
+    source_name = Path(record["source_path"]).name
+    match = re.match(r"^(\d+)-\d+-\d+\.wav$", source_name, re.IGNORECASE)
+    declared = str(record.get("speaker_id", "")).strip()
+    if match:
+        speaker_id = match.group(1)
+        if declared and declared != speaker_id:
+            raise ValueError(
+                f"Declared speaker ID {declared!r} conflicts with source filename {source_name!r}"
+            )
+        return speaker_id
+    if declared.isdigit():
+        return declared
+    raise ValueError(
+        f"Cannot verify clean speaker ID from {source_name!r}; provide trusted speaker metadata"
+    )
+
+
+def validate_master_records(records: list[dict], dataset_root: Path) -> None:
+    """Reject missing files, unverifiable clean speakers, and repeated source audio."""
+    content_paths: dict[str, str] = {}
+    errors: list[str] = []
+    for record in records:
+        source = str(record.get("source_path", ""))
+        path = dataset_root / source
+        if not path.is_file():
+            errors.append(f"Missing source file: {source}")
+            continue
+        if record.get("source_group") == "clean":
+            try:
+                get_speaker_id(record)
+            except ValueError as exc:
+                errors.append(str(exc))
+        digest = hashlib.file_digest(path.open("rb"), "sha256").hexdigest()
+        previous = content_paths.get(digest)
+        if previous is not None and previous != source:
+            errors.append(
+                f"Identical source audio in master manifest: {previous} and {source}"
+            )
+        else:
+            content_paths[digest] = source
+
+    if errors:
+        details = "\n".join(f"- {error}" for error in errors[:25])
+        remaining = len(errors) - min(len(errors), 25)
+        suffix = f"\n- ... and {remaining} more" if remaining else ""
+        raise SystemExit(
+            f"Refusing to build Phase 3 v2 manifests: {len(errors)} source-integrity issue(s).\n"
+            f"{details}{suffix}"
+        )
 
 
 def build_phase3_v2_manifests():
@@ -42,6 +86,8 @@ def build_phase3_v2_manifests():
 
     with open(MASTER_MANIFEST, "r", encoding="utf-8") as f:
         records = [json.loads(line) for line in f if line.strip()]
+
+    validate_master_records(records, PROJECT_ROOT / "data" / "raw" / "dataset")
 
     print(f"Loaded {len(records)} records from {MASTER_MANIFEST}")
 
@@ -84,10 +130,16 @@ def build_phase3_v2_manifests():
     for spk in remaining_speakers:
         count = len(speaker_groups[spk])
         # If val needs more (target ~15% = 202)
-        if val_count + count <= 0.18 * total_clean and len(val_speakers) < len(remaining_speakers) // 4:
+        if (
+            val_count + count <= 0.18 * total_clean
+            and len(val_speakers) < len(remaining_speakers) // 4
+        ):
             val_speakers.append(spk)
             val_count += count
-        elif test_count + count <= 0.18 * total_clean and len(test_speakers) < len(remaining_speakers) // 4:
+        elif (
+            test_count + count <= 0.18 * total_clean
+            and len(test_speakers) < len(remaining_speakers) // 4
+        ):
             test_speakers.append(spk)
             test_count += count
         else:
@@ -95,9 +147,15 @@ def build_phase3_v2_manifests():
             train_count += count
 
     print(f"\nClean Split by Speaker:")
-    print(f"  TRAIN: {train_count} files across {len(train_speakers)} speakers: {train_speakers}")
-    print(f"  VAL:   {val_count} files across {len(val_speakers)} speakers: {val_speakers}")
-    print(f"  TEST:  {test_count} files across {len(test_speakers)} speakers: {test_speakers}")
+    print(
+        f"  TRAIN: {train_count} files across {len(train_speakers)} speakers: {train_speakers}"
+    )
+    print(
+        f"  VAL:   {val_count} files across {len(val_speakers)} speakers: {val_speakers}"
+    )
+    print(
+        f"  TEST:  {test_count} files across {len(test_speakers)} speakers: {test_speakers}"
+    )
 
     # Build clean split dictionaries
     split_clean = {"train": [], "validation": [], "test": []}
@@ -160,7 +218,9 @@ def build_phase3_v2_manifests():
 
     print("\nNoise Split by Category:")
     for split_name in ["train", "validation", "test"]:
-        cnt = Counter((r["noise_class"], r["noise_subclass"]) for r in split_noise[split_name])
+        cnt = Counter(
+            (r["noise_class"], r["noise_subclass"]) for r in split_noise[split_name]
+        )
         print(f"  {split_name.upper()} ({len(split_noise[split_name])} files):")
         for k, v in sorted(cnt.items()):
             print(f"    {k[0]} / {k[1]}: {v}")
@@ -196,7 +256,11 @@ def build_phase3_v2_manifests():
             "total_records": len(combined),
             "clean_records": len(split_clean[split_name]),
             "noise_records": len(split_noise[split_name]),
-            "speakers": train_speakers if split_name == "train" else (val_speakers if split_name == "validation" else test_speakers),
+            "speakers": (
+                train_speakers
+                if split_name == "train"
+                else (val_speakers if split_name == "validation" else test_speakers)
+            ),
         }
         print(f"Wrote {len(combined)} records to {out_path}")
 

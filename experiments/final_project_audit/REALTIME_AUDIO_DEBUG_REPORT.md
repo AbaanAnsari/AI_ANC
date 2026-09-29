@@ -5,15 +5,17 @@
 **Host Platform**: Windows (sounddevice / PortAudio)  
 **Host Audio Architecture**: MME / DirectSound / WASAPI  
 **Target Architecture**: Dual-Microphone Neural Speech Enhancement (CNN+GRU CRM)  
-**Status**: **ALL TESTS PASSED — PHYSICAL HARDWARE I/O VERIFIED**
+**Status**: **HISTORICAL HOST AUDIO I/O REPORT — NOT PHYSICAL ANC VALIDATION**
+
+> Audit note (2026-09-30): the measurements below are archived host capture/playback observations. They do not validate acoustic cancellation, microphone coupling, or current Phase 3 model performance. Physical ANC validation remains **REQUIRES HARDWARE**.
 
 ---
 
 ## 1. Executive Summary
 
-This report documents the diagnosis, repair, and full hardware validation of the physical audio streaming pipeline for the AETHEL123 dual-microphone speech enhancement system.
+This report records the diagnosis and host audio capture/playback checks performed at the time. It is not evidence of end-to-end acoustic ANC performance.
 
-The physical audio path has been proven end-to-end:
+The report recorded the following host audio path:
 ```
 PHYSICAL MICROPHONE (Realtek Microphone Array, 2 channels)
     ↓
@@ -142,4 +144,4 @@ In accordance with Phase 20 requirements:
 
 ## 6. Conclusion
 
-The real-time physical audio I/O pipeline is fully operational and verified under physical hardware streaming conditions on Windows.
+The report records successful host audio I/O under its historical Windows setup. Current physical microphone coupling, acoustic ANC performance, and end-to-end latency have not been revalidated.

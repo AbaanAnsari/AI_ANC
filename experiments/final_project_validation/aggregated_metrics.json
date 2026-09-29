@@ -1,100 +1,104 @@
 {
-  "total_samples": 202,
-  "ok_samples": 202,
+  "total_samples": 227,
+  "ok_samples": 227,
   "error_samples": 0,
   "snr_noisy": {
-    "mean": 8.8861,
+    "mean": 9.0088,
     "median": 10.0,
-    "std": 8.4357,
+    "std": 8.2638,
     "min": -5.0,
     "max": 20.0,
-    "count": 202
+    "count": 227
   },
   "snr_enhanced": {
-    "mean": 12.1916,
-    "median": 12.0427,
-    "std": 6.5861,
-    "min": -3.0221,
-    "max": 26.324,
-    "count": 202
+    "mean": 13.6742,
+    "median": 14.0844,
+    "std": 5.9533,
+    "min": -3.6759,
+    "max": 24.8303,
+    "count": 227
   },
   "snr_improvement": {
-    "mean": 3.3054,
-    "median": 2.9606,
-    "std": 3.5437,
-    "min": -10.2095,
-    "max": 14.5965,
-    "count": 202
+    "mean": 4.6654,
+    "median": 4.2252,
+    "std": 3.8869,
+    "min": -8.3223,
+    "max": 19.8303,
+    "count": 227
   },
   "stoi_noisy": {
-    "mean": 0.8128,
-    "median": 0.882,
-    "std": 0.2026,
-    "min": -0.0555,
-    "max": 0.9991,
-    "count": 202
+    "mean": 0.8075,
+    "median": 0.8758,
+    "std": 0.2164,
+    "min": -0.0231,
+    "max": 0.9995,
+    "count": 227
   },
   "stoi_enhanced": {
-    "mean": 0.8249,
-    "median": 0.8881,
-    "std": 0.1956,
-    "min": 0.0,
+    "mean": 0.83,
+    "median": 0.9021,
+    "std": 0.2098,
+    "min": -0.0565,
     "max": 0.9978,
-    "count": 202
+    "count": 227
   },
   "stoi_improvement": {
-    "mean": 0.0121,
-    "median": 0.0008,
-    "std": 0.0508,
-    "min": -0.1488,
-    "max": 0.2743,
-    "count": 202
+    "mean": 0.0225,
+    "median": 0.0085,
+    "std": 0.0552,
+    "min": -0.1196,
+    "max": 0.2243,
+    "count": 227
   },
   "pesq_noisy": {
-    "mean": 1.5116,
-    "median": 1.2977,
-    "std": 0.5461,
+    "mean": 1.4756,
+    "median": 1.2893,
+    "std": 0.5121,
     "min": 1.0252,
-    "max": 3.5324,
-    "count": 201
+    "max": 3.8793,
+    "count": 224
   },
   "pesq_enhanced": {
-    "mean": 1.6997,
-    "median": 1.4596,
-    "std": 0.6383,
-    "min": 1.034,
-    "max": 3.6273,
-    "count": 201
+    "mean": 1.897,
+    "median": 1.8326,
+    "std": 0.6273,
+    "min": 1.0315,
+    "max": 3.7625,
+    "count": 224
   },
   "pesq_improvement": {
-    "mean": 0.1881,
-    "median": 0.1338,
-    "std": 0.2606,
-    "min": -0.3398,
-    "max": 1.7664,
-    "count": 201
+    "mean": 0.4214,
+    "median": 0.4129,
+    "std": 0.3032,
+    "min": -0.6437,
+    "max": 1.2852,
+    "count": 224
   },
-  "pesq_noisy_failure_count": 1,
-  "pesq_enhanced_failure_count": 1,
-  "classification_accuracy": 0.6931,
-  "classification_correct": 140,
-  "classification_total": 202,
+  "pesq_noisy_failure_count": 3,
+  "pesq_enhanced_failure_count": 3,
+  "classification_accuracy": 0.4493,
+  "classification_correct": 102,
+  "classification_total": 227,
   "per_class_accuracy": {
-    "stationary": 0.6447,
-    "non-stationary": 0.5167,
-    "impulsive": 0.9091
+    "stationary": 0.4444,
+    "non-stationary": 0.3099,
+    "impulsive": 0.5867
   },
   "per_class_total": {
-    "stationary": 76,
-    "non-stationary": 60,
-    "impulsive": 66
+    "stationary": 81,
+    "non-stationary": 71,
+    "impulsive": 75
   },
   "stoi_extended": false,
   "stoi_sample_rate": 16000,
   "pesq_mode": "wb",
   "pesq_sample_rate": 16000,
   "pesq_resampling": "none (native 16 kHz)",
-  "model_epoch": 30,
-  "checkpoint_path": "experiments\\phase3_H\\best_checkpoint.pt",
-  "evaluation_duration_s": 35.69
+  "model_epoch": 68,
+  "checkpoint_path": "D:\\SIH\\AI_ANC\\experiments\\phase3_100ep\\best_checkpoint.pt",
+  "checkpoint_sha256": "086ddcbb74e57caadd7e8867b94085d37f99f84dad89251ab9a02dce7454350c",
+  "test_manifest_path": "data/manifests/phase3_v2/test_manifest.jsonl",
+  "test_manifest_sha256": "e82de3316a66b767dca3200892869692df38173f6497e67503d3fb557cb20bb1",
+  "model_parameter_count": 70789,
+  "evaluation_duration_s": 35.31
 }

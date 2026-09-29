@@ -92,7 +92,9 @@ class Phase1Dataset(TorchDataset):
         # Epoch state with cross-process shared memory support for PyTorch DataLoader workers
         if HAS_TORCH:
             try:
-                self._epoch_tensor = torch.tensor([self.epoch], dtype=torch.int32).share_memory_()
+                self._epoch_tensor = torch.tensor(
+                    [self.epoch], dtype=torch.int32
+                ).share_memory_()
             except Exception:
                 self._epoch_tensor = torch.tensor([self.epoch], dtype=torch.int32)
         else:
@@ -107,14 +109,10 @@ class Phase1Dataset(TorchDataset):
             records = json.loads(content)
         else:
             records = [
-                json.loads(line)
-                for line in content.splitlines()
-                if line.strip()
+                json.loads(line) for line in content.splitlines() if line.strip()
             ]
 
-        self.clean_records = [
-            r for r in records if r.get("source_group") == "clean"
-        ]
+        self.clean_records = [r for r in records if r.get("source_group") == "clean"]
         if not self.clean_records:
             raise ValueError(
                 f"No clean speech records found in manifest: {self.manifest_path}"
@@ -138,16 +136,17 @@ class Phase1Dataset(TorchDataset):
             self._epoch_tensor[0] = int(epoch)
 
     @staticmethod
-    def compute_sample_seed(global_seed: int, epoch: int, worker_id: int, index: int) -> int:
+    def compute_sample_seed(
+        global_seed: int, epoch: int, worker_id: int, index: int
+    ) -> int:
         """
         Deterministic, collision-resistant 64-bit seed computation.
-        Guarantees:
-          1. Same (global_seed, epoch, worker_id, index) -> exact same sample seed.
-          2. Different epoch -> completely different pseudo-random stream.
-          3. Different worker_id -> independent stream (no worker collisions).
-          4. Independent of OS entropy, python hash randomization, or system time.
+        Same (global_seed, epoch, index) always yields the same seed in every worker.
+        Different epochs yield different pseudo-random streams.
+
+        worker_id is retained for compatibility but does not affect sample identity.
         """
-        token = f"{global_seed}:{epoch}:{worker_id}:{index}".encode("utf-8")
+        token = f"{global_seed}:{epoch}:{index}".encode("utf-8")
         h = hashlib.sha256(token).digest()
         return int.from_bytes(h[:8], "little")
 
@@ -165,8 +164,14 @@ class Phase1Dataset(TorchDataset):
             if worker_info is not None:
                 worker_id = worker_info.id
 
-        current_epoch = 0 if self.is_validation else (
-            int(self._epoch_tensor[0]) if self._epoch_tensor is not None else self.epoch
+        current_epoch = (
+            0
+            if self.is_validation
+            else (
+                int(self._epoch_tensor[0])
+                if self._epoch_tensor is not None
+                else self.epoch
+            )
         )
 
         sample_seed = self.compute_sample_seed(
@@ -264,15 +269,16 @@ class Phase1Dataset(TorchDataset):
         target_stft = compute_stft(clean_seg)  # (257, T) complex64
 
         # Model-ready features: (2, 257, T) float32 [Ch0=Real, Ch1=Imag]
-        noisy_features = np.stack(
-            [noisy_stft.real, noisy_stft.imag], axis=0
-        ).astype(np.float32)
+        noisy_features = np.stack([noisy_stft.real, noisy_stft.imag], axis=0).astype(
+            np.float32
+        )
 
         noise_label = NOISE_CLASS_TO_LABEL[noise_class]
 
         metadata = {
             "clean_source_path": clean_record["source_path"],
             "clean_record_id": clean_record["record_id"],
+            "clean_speaker_id": clean_record.get("speaker_id"),
             "noise_source_path": noise_record["source_path"],
             "noise_record_id": noise_record["record_id"],
             "noise_class": noise_class,
@@ -301,9 +307,7 @@ class Phase1Dataset(TorchDataset):
                     relative_delay_samples, dtype=torch.int64
                 ),
                 "gcc_delay_samples": torch.tensor(gcc_delay, dtype=torch.int64),
-                "kalman_delay_samples": torch.tensor(
-                    kalman_delay, dtype=torch.float32
-                ),
+                "kalman_delay_samples": torch.tensor(kalman_delay, dtype=torch.float32),
                 "metadata": metadata,
             }
 
@@ -338,20 +342,36 @@ def custom_collate_fn(batch_list: list[dict]) -> dict:
         noisy_features = torch.stack([s["noisy_features"] for s in batch_list], dim=0)
         target_stft = torch.stack([s["target_stft"] for s in batch_list], dim=0)
         clean_target = torch.stack([s["clean_target"] for s in batch_list], dim=0)
-        noise_class_label = torch.stack([s["noise_class_label"] for s in batch_list], dim=0)
+        noise_class_label = torch.stack(
+            [s["noise_class_label"] for s in batch_list], dim=0
+        )
         target_snr_db = torch.stack([s["target_snr_db"] for s in batch_list], dim=0)
         measured_snr_db = torch.stack([s["measured_snr_db"] for s in batch_list], dim=0)
-        gcc_delay_samples = torch.stack([s["gcc_delay_samples"] for s in batch_list], dim=0)
-        kalman_delay_samples = torch.stack([s["kalman_delay_samples"] for s in batch_list], dim=0)
+        gcc_delay_samples = torch.stack(
+            [s["gcc_delay_samples"] for s in batch_list], dim=0
+        )
+        kalman_delay_samples = torch.stack(
+            [s["kalman_delay_samples"] for s in batch_list], dim=0
+        )
     else:
         noisy_features = np.stack([s["noisy_features"] for s in batch_list], axis=0)
         target_stft = np.stack([s["target_stft"] for s in batch_list], axis=0)
         clean_target = np.stack([s["clean_target"] for s in batch_list], axis=0)
-        noise_class_label = np.array([s["noise_class_label"] for s in batch_list], dtype=np.int64)
-        target_snr_db = np.array([s["target_snr_db"] for s in batch_list], dtype=np.float32)
-        measured_snr_db = np.array([s["measured_snr_db"] for s in batch_list], dtype=np.float32)
-        gcc_delay_samples = np.array([s["gcc_delay_samples"] for s in batch_list], dtype=np.int64)
-        kalman_delay_samples = np.array([s["kalman_delay_samples"] for s in batch_list], dtype=np.float32)
+        noise_class_label = np.array(
+            [s["noise_class_label"] for s in batch_list], dtype=np.int64
+        )
+        target_snr_db = np.array(
+            [s["target_snr_db"] for s in batch_list], dtype=np.float32
+        )
+        measured_snr_db = np.array(
+            [s["measured_snr_db"] for s in batch_list], dtype=np.float32
+        )
+        gcc_delay_samples = np.array(
+            [s["gcc_delay_samples"] for s in batch_list], dtype=np.int64
+        )
+        kalman_delay_samples = np.array(
+            [s["kalman_delay_samples"] for s in batch_list], dtype=np.float32
+        )
 
     return {
         "noisy_features": noisy_features,
@@ -412,4 +432,3 @@ def create_dataloader(
         batch_samples = [dataset[idx] for idx in batch_indices]
         batches.append(custom_collate_fn(batch_samples))
     return batches
-

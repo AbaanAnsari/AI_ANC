@@ -4,6 +4,8 @@
 **Project Status**: RESEARCH PROTOTYPE — Phase 2 Implementation Complete  
 **Model Checkpoint**: `experiments/phase2_step6_targeted_crm_full/best_checkpoint.pt`
 
+> Historical Phase 2 report. Its checkpoint, metrics, code/test counts, and hardware wording are not current Phase 3 results. Current Phase 3 status and limitations are documented in the root README and `experiments/phase3_100ep/phase3_report.md`. The Phase 3 v2 manifest leakage audit currently fails; physical ANC and STM32 validation remain **NOT TESTED**.
+
 > [!CAUTION]
 > This is a research prototype. Performance targets have NOT been met. All metrics are measured on real data. No values are fabricated.
 

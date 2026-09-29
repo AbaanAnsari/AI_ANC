@@ -2,6 +2,8 @@
 ## AI-Driven Noise Cancellation & Speech Enhancement
 Audit Date: 2026-09-27
 
+> Historical pre-implementation audit. The placeholder inventory below is not current. Use the root README and Phase 3 report for current implementation status. Physical ANC and STM32 validation remain **NOT TESTED**.
+
 ## IMPLEMENTED & VALIDATED
 - src/data/audio_loader.py, segmenter.py, mixer.py, dual_mic.py, noise_selector.py, dataset.py
 - src/features/stft.py — STFT/ISTFT validated

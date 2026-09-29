@@ -18,8 +18,8 @@ import wave
 from collections import Counter, defaultdict
 from pathlib import Path
 
-
-DEFAULT_ROOT = Path(r"D:\SIH\SIH_2026\data")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_ROOT = PROJECT_ROOT / "data" / "raw" / "dataset"
 
 
 def parse_args():
@@ -28,7 +28,7 @@ def parse_args():
     p.add_argument(
         "--report",
         type=Path,
-        default=Path("data") / "manifests" / "dataset_inspection.json",
+        default=PROJECT_ROOT / "data" / "manifests" / "dataset_inspection.json",
     )
     return p.parse_args()
 
@@ -41,9 +41,7 @@ def inspect_wav(path: Path):
             "sample_width_bytes": w.getsampwidth(),
             "frames": w.getnframes(),
             "duration_seconds": (
-                w.getnframes() / w.getframerate()
-                if w.getframerate()
-                else 0.0
+                w.getnframes() / w.getframerate() if w.getframerate() else 0.0
             ),
         }
 
@@ -99,10 +97,12 @@ def main():
         try:
             meta = inspect_wav(path)
         except Exception as exc:
-            invalid.append({
-                "path": path.relative_to(root).as_posix(),
-                "error": str(exc),
-            })
+            invalid.append(
+                {
+                    "path": path.relative_to(root).as_posix(),
+                    "error": str(exc),
+                }
+            )
             continue
 
         counts[category] += 1
@@ -119,9 +119,7 @@ def main():
         "successfully_parsed_wav_files": sum(counts.values()),
         "total_duration_seconds": round(sum(durations.values()), 6),
         "categories": dict(counts),
-        "category_durations_seconds": {
-            k: round(v, 6) for k, v in durations.items()
-        },
+        "category_durations_seconds": {k: round(v, 6) for k, v in durations.items()},
         "subcategories": dict(sorted(subclass_counts.items())),
         "sample_rates": dict(sorted(sample_rates.items())),
         "channels": dict(sorted(channels.items())),
@@ -138,7 +136,7 @@ def main():
 
     report_path = args.report
     if not report_path.is_absolute():
-        report_path = Path.cwd() / report_path
+        report_path = PROJECT_ROOT / report_path
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
         json.dumps(report, indent=2, ensure_ascii=False),

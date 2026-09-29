@@ -11,16 +11,20 @@ Authoritative endpoints for:
     - /pause and /gain: Processing controls
     - /ws/live: Live WebSocket telemetry and waveform stream
 """
+
 from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import sys
 import traceback
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import numpy as np
 
@@ -31,11 +35,21 @@ if str(PROJECT_ROOT) not in sys.path:
 logger = logging.getLogger("realtime.backend")
 
 try:
-    from fastapi import FastAPI, HTTPException, Request, File, UploadFile, Form, WebSocket, WebSocketDisconnect
+    from fastapi import (
+        FastAPI,
+        HTTPException,
+        Request,
+        File,
+        UploadFile,
+        Form,
+        WebSocket,
+        WebSocketDisconnect,
+    )
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import JSONResponse, Response, FileResponse
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel, Field, field_validator
+
     HAS_FASTAPI = True
 except ImportError:
     HAS_FASTAPI = False
@@ -43,6 +57,7 @@ except ImportError:
 
 try:
     import soundfile as sf
+
     HAS_SOUNDFILE = True
 except ImportError:
     HAS_SOUNDFILE = False
@@ -57,18 +72,21 @@ from src.realtime.constants import (
     AUDIO_CONFIG_INDICATOR,
 )
 from src.realtime.live_audio_engine import LiveAudioEngine
+from src.project_paths import PHASE3_V2_CHECKPOINT, PHASE3_V2_MANIFEST_DIR
 
 FRONTEND_DIR = PROJECT_ROOT / "simulator" / "frontend"
 
 # Authoritative engine instance
 live_engine = LiveAudioEngine()
 state.set_live_engine(live_engine)
+evaluation_job: Optional[dict] = None
 
 # ---------------------------------------------------------------------------
 # Request Schemas
 # ---------------------------------------------------------------------------
 
 if HAS_FASTAPI:
+
     class StreamStartRequest(BaseModel):
         input_device_id: Optional[int] = None
         output_device_id: Optional[int] = None
@@ -81,7 +99,9 @@ if HAS_FASTAPI:
         @field_validator("block_size")
         def validate_block_size(cls, v: int) -> int:
             if v != BLOCK_SIZE:
-                logger.info("Enforcing immutable audio block size %d samples", BLOCK_SIZE)
+                logger.info(
+                    "Enforcing immutable audio block size %d samples", BLOCK_SIZE
+                )
             return BLOCK_SIZE
 
     class StreamGainRequest(BaseModel):
@@ -112,10 +132,14 @@ if HAS_FASTAPI:
         noise_gain: float = Field(default=1.0, ge=0.1, le=5.0)
         seed: int = Field(default=42)
 
+    class EvaluationJobRequest(BaseModel):
+        task: Literal["metrics", "ablation"]
+
 
 # ---------------------------------------------------------------------------
 # Module-level Endpoint Functions (Directly Importable for Testing)
 # ---------------------------------------------------------------------------
+
 
 async def get_status() -> dict:
     """
@@ -180,13 +204,23 @@ async def start_stream(req: Optional[StreamStartRequest] = None):
     )
     if not success:
         raise HTTPException(status_code=400, detail=msg)
-    return {"status": "ok", "message": msg, "running": True, "state": state.get_status()}
+    return {
+        "status": "ok",
+        "message": msg,
+        "running": True,
+        "state": state.get_status(),
+    }
 
 
 async def stop_stream():
     """Stop physical audio streams and release hardware handles."""
     live_engine.stop()
-    return {"status": "ok", "message": "Stream stopped successfully.", "running": False, "state": state.get_status()}
+    return {
+        "status": "ok",
+        "message": "Stream stopped successfully.",
+        "running": False,
+        "state": state.get_status(),
+    }
 
 
 async def pause_stream(req: StreamPauseRequest):
@@ -236,7 +270,12 @@ async def get_quality_metrics():
     """
     Expose latest validated held-out test evaluation metrics from aggregated_metrics.json.
     """
-    metrics_path = PROJECT_ROOT / "experiments" / "final_project_validation" / "aggregated_metrics.json"
+    metrics_path = (
+        PROJECT_ROOT
+        / "experiments"
+        / "final_project_validation"
+        / "aggregated_metrics.json"
+    )
     if not metrics_path.exists():
         return {"available": False, "reason": "Evaluation results unavailable"}
 
@@ -244,12 +283,51 @@ async def get_quality_metrics():
         with open(metrics_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
+        checkpoint_path = Path(str(data.get("checkpoint_path", "")))
+        manifest_path = Path(str(data.get("test_manifest_path", "")))
+        if not checkpoint_path.is_absolute():
+            checkpoint_path = PROJECT_ROOT / checkpoint_path
+        if not manifest_path.is_absolute():
+            manifest_path = PROJECT_ROOT / manifest_path
+        expected_manifest = PHASE3_V2_MANIFEST_DIR / "test_manifest.jsonl"
+        if checkpoint_path.resolve() != PHASE3_V2_CHECKPOINT.resolve():
+            return {
+                "available": False,
+                "reason": "Stored metrics use an older or different checkpoint; rerun evaluation.",
+            }
+        if manifest_path.resolve() != expected_manifest.resolve():
+            return {
+                "available": False,
+                "reason": "Stored metrics use a different test manifest; rerun evaluation.",
+            }
+        if not data.get("checkpoint_sha256") or not data.get("test_manifest_sha256"):
+            return {
+                "available": False,
+                "reason": "Stored metrics lack checkpoint or test-manifest provenance; rerun evaluation.",
+            }
+        with PHASE3_V2_CHECKPOINT.open("rb") as checkpoint_file:
+            checkpoint_hash = hashlib.file_digest(checkpoint_file, "sha256").hexdigest()
+        with expected_manifest.open("rb") as manifest_file:
+            manifest_hash = hashlib.file_digest(manifest_file, "sha256").hexdigest()
+        if (
+            data["checkpoint_sha256"] != checkpoint_hash
+            or data["test_manifest_sha256"] != manifest_hash
+        ):
+            return {
+                "available": False,
+                "reason": "Checkpoint or test manifest changed since evaluation; rerun evaluation.",
+            }
+
         return {
             "available": True,
             "source": "offline_evaluation",
-            "label": "Latest Held-Out Test Evaluation",
-            "timestamp": "2026-09-27",
-            "samples": data.get("total_samples", 202),
+            "label": "Phase 3 v2 Held-Out Evaluation",
+            "timestamp": datetime.fromtimestamp(
+                metrics_path.stat().st_mtime, timezone.utc
+            )
+            .date()
+            .isoformat(),
+            "samples": data["total_samples"],
             "stoi": {
                 "noisy": round(float(data["stoi_noisy"]["mean"]), 4),
                 "enhanced": round(float(data["stoi_enhanced"]["mean"]), 4),
@@ -272,25 +350,79 @@ async def get_quality_metrics():
                 "target_met": bool(data["snr_enhanced"]["mean"] >= 15.0),
             },
             "classification": {
-                "accuracy": round(float(data.get("classification_accuracy", 0.7624)), 4),
-                "correct": data.get("classification_correct", 154),
-                "total": data.get("classification_total", 202),
+                "accuracy": round(float(data["classification_accuracy"]), 4),
+                "correct": data["classification_correct"],
+                "total": data["classification_total"],
                 "per_class_accuracy": data.get("per_class_accuracy", {}),
             },
             "model_info": {
-                "parameters": 70789,
+                "parameters": data["model_parameter_count"],
                 "parameter_limit": 100000,
-                "model_epoch": data.get("model_epoch", 29),
-            }
+                "model_epoch": data["model_epoch"],
+            },
         }
     except Exception as e:
         logger.error("Error reading aggregated metrics: %s", e)
         return {"available": False, "reason": str(e)}
 
 
+async def _run_evaluation_job(job_id: str, task: str) -> None:
+    global evaluation_job
+
+    jobs_dir = PROJECT_ROOT / "experiments" / "dashboard_evaluation"
+    jobs_dir.mkdir(parents=True, exist_ok=True)
+    log_path = jobs_dir / f"{job_id}.log"
+    output_path = (
+        PROJECT_ROOT
+        / "experiments"
+        / "final_project_validation"
+        / "aggregated_metrics.json"
+        if task == "metrics"
+        else jobs_dir / "ablation_results.json"
+    )
+    evaluation_job.update(
+        {"state": "running", "log_path": str(log_path.relative_to(PROJECT_ROOT))}
+    )
+
+    try:
+        with log_path.open("w", encoding="utf-8") as log_file:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                str(PROJECT_ROOT / "scripts" / "run_dashboard_evaluation.py"),
+                "--task",
+                task,
+                cwd=str(PROJECT_ROOT),
+                stdout=log_file,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            return_code = await process.wait()
+        evaluation_job.update(
+            {
+                "state": "completed" if return_code == 0 else "failed",
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "output_path": str(output_path.relative_to(PROJECT_ROOT)),
+                "error": (
+                    None
+                    if return_code == 0
+                    else f"Runner exited with code {return_code}"
+                ),
+            }
+        )
+    except Exception as exc:
+        evaluation_job.update(
+            {
+                "state": "failed",
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "log_path": str(log_path.relative_to(PROJECT_ROOT)),
+                "error": str(exc),
+            }
+        )
+
+
 # ---------------------------------------------------------------------------
 # App Factory
 # ---------------------------------------------------------------------------
+
 
 def create_app() -> Any:
     if not HAS_FASTAPI:
@@ -357,6 +489,32 @@ def create_app() -> Any:
     app.get("/metrics/quality")(get_quality_metrics)
     app.get("/api/metrics/quality")(get_quality_metrics)
 
+    @app.post("/api/evaluation/jobs")
+    async def start_evaluation_job(req: EvaluationJobRequest):
+        global evaluation_job
+        if evaluation_job and evaluation_job["state"] in {"queued", "running"}:
+            raise HTTPException(
+                status_code=409, detail="An evaluation job is already running"
+            )
+
+        job_id = uuid.uuid4().hex
+        evaluation_job = {
+            "job_id": job_id,
+            "task": req.task,
+            "state": "queued",
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "finished_at": None,
+            "output_path": None,
+            "log_path": None,
+            "error": None,
+        }
+        asyncio.create_task(_run_evaluation_job(job_id, req.task))
+        return dict(evaluation_job)
+
+    @app.get("/api/evaluation/jobs")
+    async def get_evaluation_job():
+        return {"job": dict(evaluation_job) if evaluation_job else None}
+
     # 8. WebSocket Live Stream
     @app.websocket("/ws/live")
     async def websocket_live_telemetry(websocket: WebSocket):
@@ -415,7 +573,9 @@ def create_app() -> Any:
     # 6. Static UI Serving
     if FRONTEND_DIR.exists():
         if (FRONTEND_DIR / "css").exists():
-            app.mount("/css", StaticFiles(directory=str(FRONTEND_DIR / "css")), name="css")
+            app.mount(
+                "/css", StaticFiles(directory=str(FRONTEND_DIR / "css")), name="css"
+            )
         if (FRONTEND_DIR / "js").exists():
             app.mount("/js", StaticFiles(directory=str(FRONTEND_DIR / "js")), name="js")
 

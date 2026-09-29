@@ -11,9 +11,11 @@ Computes:
 - Breakdown by input SNR levels
 - Classification Accuracy, Macro-F1, Confusion Matrix
 """
+
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import math
@@ -32,27 +34,75 @@ from src.data.dataset import Phase1Dataset
 from src.features.stft import compute_istft
 from src.models.cnn_gru_mask import LightweightCNNGRUMaskModel
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+)
 logger = logging.getLogger("heldout_eval")
 
-MANIFEST_PATH = PROJECT_ROOT / "data" / "manifests" / "phase3_v2" / "test_manifest.jsonl"
+MANIFEST_PATH = (
+    PROJECT_ROOT / "data" / "manifests" / "phase3_v2" / "test_manifest.jsonl"
+)
 DATASET_ROOT = PROJECT_ROOT / "data" / "raw" / "dataset"
+TEST_SEED = 20260929
 
 
 def compute_snr(clean: np.ndarray, noisy: np.ndarray) -> float:
     min_len = min(len(clean), len(noisy))
     c = clean[:min_len]
     n = noisy[:min_len]
-    p_clean = float(np.mean(c ** 2))
+    p_clean = float(np.mean(c**2))
     p_err = float(np.mean((n - c) ** 2) + 1e-15)
     return 10.0 * np.log10(p_clean / p_err)
+
+
+def build_test_mixture_record(sample_index: int, item: dict) -> dict[str, Any]:
+    metadata = item["metadata"]
+    mixture = {
+        "sample_index": sample_index,
+        "sample_seed": int(item["sample_seed"]),
+        "clean_record_id": metadata["clean_record_id"],
+        "clean_source_path": metadata["clean_source_path"],
+        "speaker_id": metadata.get("clean_speaker_id"),
+        "noise_record_id": metadata["noise_record_id"],
+        "noise_source_path": metadata["noise_source_path"],
+        "noise_class": item["noise_class"],
+        "noise_subclass": metadata.get("noise_subclass"),
+        "target_snr_db": float(item["target_snr_db"].item()),
+        "measured_snr_db": float(item["measured_snr_db"].item()),
+        "configured_delay_samples": int(item["configured_delay_samples"].item()),
+        "gcc_delay_samples": int(item["gcc_delay_samples"].item()),
+        "kalman_delay_samples": float(item["kalman_delay_samples"].item()),
+        "gain_mismatch": 1.0,
+        "filter_coefficients": [0.9, 0.1],
+    }
+    mixture["mixture_id"] = hashlib.sha256(
+        json.dumps(mixture, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return mixture
 
 
 def evaluate_checkpoint(
     checkpoint_path: Path,
     device: str = "cpu",
     max_samples: int | None = None,
+    seed: int = TEST_SEED,
 ) -> Dict[str, Any]:
+    from scripts.audit_manifest_leakage import audit_manifests
+
+    leakage_errors = audit_manifests(
+        {
+            "train": MANIFEST_PATH.with_name("train_manifest.jsonl"),
+            "validation": MANIFEST_PATH.with_name("val_manifest.jsonl"),
+            "test": MANIFEST_PATH,
+        },
+        DATASET_ROOT,
+    )
+    if leakage_errors:
+        raise RuntimeError(
+            f"Held-out evaluation blocked by {len(leakage_errors)} manifest leakage/integrity finding(s). "
+            f"Run scripts/audit_manifest_leakage.py --manifest-dir {MANIFEST_PATH.parent} first."
+        )
+
     logger.info("Loading checkpoint from %s...", checkpoint_path)
     ckpt = torch.load(checkpoint_path, map_location=device)
     model = LightweightCNNGRUMaskModel()
@@ -64,7 +114,7 @@ def evaluate_checkpoint(
     test_ds = Phase1Dataset(
         manifest_path=MANIFEST_PATH,
         dataset_root=DATASET_ROOT,
-        seed=20260929,
+        seed=seed,
         is_validation=True,  # deterministic epoch 0
     )
     n_total = len(test_ds)
@@ -77,6 +127,7 @@ def evaluate_checkpoint(
     output_snrs = []
     class_trues = []
     class_preds = []
+    test_mixtures = []
 
     # Per-class accumulators
     class_names = ["stationary", "non-stationary", "impulsive"]
@@ -86,6 +137,8 @@ def evaluate_checkpoint(
     with torch.no_grad():
         for i in range(n_total):
             item = test_ds[i]
+            test_mixtures.append(build_test_mixture_record(i, item))
+
             feat = item["noisy_features"].unsqueeze(0).to(device)
             enh_ri, cls_logits, _ = model(feat)
 
@@ -160,8 +213,32 @@ def evaluate_checkpoint(
         f1_list.append(f1)
     macro_f1 = float(np.mean(f1_list))
 
+    mixture_manifest_path = (
+        checkpoint_path.parent
+        / f"frozen_test_mixtures_{len(test_mixtures)}_samples.jsonl"
+    )
+    with mixture_manifest_path.open(
+        "w", encoding="utf-8", newline="\n"
+    ) as mixture_file:
+        for mixture in test_mixtures:
+            mixture_file.write(json.dumps(mixture, sort_keys=True) + "\n")
+
+    mixture_hash = hashlib.file_digest(
+        mixture_manifest_path.open("rb"), "sha256"
+    ).hexdigest()
     results = {
         "checkpoint": str(checkpoint_path),
+        "checkpoint_sha256": hashlib.file_digest(
+            Path(checkpoint_path).open("rb"), "sha256"
+        ).hexdigest(),
+        "evaluation_seed": seed,
+        "evaluated_sample_count": len(test_mixtures),
+        "test_manifest": str(MANIFEST_PATH),
+        "test_manifest_sha256": hashlib.file_digest(
+            MANIFEST_PATH.open("rb"), "sha256"
+        ).hexdigest(),
+        "frozen_test_mixture_manifest": str(mixture_manifest_path),
+        "frozen_test_mixture_manifest_sha256": mixture_hash,
         "total_samples": len(delta_snrs),
         "mean_input_snr_db": round(float(np.mean(input_snrs)), 2),
         "mean_output_snr_db": round(float(np.mean(output_snrs)), 2),

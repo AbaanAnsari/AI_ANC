@@ -1,11 +1,15 @@
 # REAL-TIME AUDIO VALIDATION REPORT — AETHEL123
 ## AI-Driven Dual-Microphone Live Audio System
 **Date**: 2026-09-27  
-**Validation Status**: **REAL PHYSICAL AUDIO STREAM VALIDATED**  
+**Validation Status**: **HISTORICAL HOST AUDIO I/O REPORT — NOT PHYSICAL ANC VALIDATION**
 **Host Environment**: Windows 11 (PortAudio V19.7.0 / sounddevice 0.5.5)  
 **Model Checkpoint**: `experiments/phase2_step6_targeted_crm_full/best_checkpoint.pt` (70,789 params)  
 
 ---
+
+> Audit note (2026-09-30): the logged host capture/playback run is retained as historical I/O evidence. It does not validate acoustic noise cancellation, microphone coupling, current Phase 3 held-out performance, or current hardware latency. Physical ANC validation remains **REQUIRES HARDWARE**.
+
+The measurements below should be read as records of the earlier test session, not as current certification.
 
 > [!IMPORTANT]
 > **MANDATORY THREE-WAY DISTINCTION**:

@@ -14,6 +14,7 @@ class DashboardPage {
   constructor() {
     this.audio = window.audioEngine;
     this.initialized = false;
+    this.evaluationPollTimer = null;
   }
 
   init() {
@@ -26,6 +27,7 @@ class DashboardPage {
     this.audio.subscribe('streamState', (s) => this.handleStreamState(s));
     this.audio.subscribe('devices', () => this.updateHardwareSummary());
     this.audio.subscribe('configChange', () => this.updateHardwareSummary());
+    this.initEvaluationActions();
 
     // Navigation cards click listeners
     const navLinks = document.querySelectorAll('[data-nav-target]');
@@ -45,6 +47,75 @@ class DashboardPage {
     this.updateHardwareSummary();
   }
 
+  initEvaluationActions() {
+    document.querySelectorAll('[data-evaluation-task]').forEach(button => {
+      button.addEventListener('click', () => {
+        this.startEvaluation(button.dataset.evaluationTask);
+      });
+    });
+    this.syncEvaluationJob();
+  }
+
+  async startEvaluation(task) {
+    this.setEvaluationState(true, `Starting ${task}...`);
+    try {
+      const response = await fetch(`${this.audio.apiBase}/api/evaluation/jobs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task }),
+      });
+      const job = await response.json();
+      if (!response.ok) throw new Error(job.detail || 'Could not start evaluation');
+      this.updateEvaluationJob(job);
+    } catch (error) {
+      this.setEvaluationState(false, `Could not start: ${error.message}`);
+    }
+  }
+
+  async syncEvaluationJob() {
+    try {
+      const response = await fetch(`${this.audio.apiBase}/api/evaluation/jobs`);
+      if (!response.ok) return;
+      const data = await response.json();
+      if (data.job) this.updateEvaluationJob(data.job);
+    } catch (error) {
+      // The backend may not be ready during page startup.
+    }
+  }
+
+  updateEvaluationJob(job) {
+    const taskName = job.task === 'ablation' ? 'Ablation study' : 'Evaluation metrics';
+    const active = job.state === 'queued' || job.state === 'running';
+    const messages = {
+      queued: `${taskName} queued`,
+      running: `${taskName} running...`,
+      completed: `${taskName} complete`,
+      failed: `${taskName} failed${job.error ? `: ${job.error}` : ''}`,
+    };
+    this.setEvaluationState(active, messages[job.state] || 'Ready');
+
+    if (job.state === 'completed' && job.task === 'metrics') {
+      this.audio.loadQualityMetrics();
+    }
+
+    if (this.evaluationPollTimer) {
+      clearTimeout(this.evaluationPollTimer);
+      this.evaluationPollTimer = null;
+    }
+    if (active) {
+      this.evaluationPollTimer = setTimeout(() => this.syncEvaluationJob(), 1500);
+    }
+  }
+
+  setEvaluationState(active, message) {
+    document.querySelectorAll('[data-evaluation-task]').forEach(button => {
+      button.disabled = active;
+    });
+    document.querySelectorAll('[data-job-status]').forEach(status => {
+      status.textContent = message;
+    });
+  }
+
   handleStreamState(state) {
     const elModelLiveTag = document.getElementById('ovModelLiveTag');
     if (elModelLiveTag) {
@@ -59,7 +130,27 @@ class DashboardPage {
   }
 
   handleQualityMetrics(data) {
-    if (!data || !data.available) return;
+    if (!data) return;
+    const qualityStatus = document.getElementById('dashboardQualityStatus');
+    if (!data.available) {
+      if (qualityStatus) {
+        qualityStatus.textContent = 'Current evaluation unavailable';
+        qualityStatus.title = data.reason || '';
+      }
+      [
+        'ovSNR', 'lblSnrNoisy', 'paramSnrDelta',
+        'ovPESQ', 'lblPesqNoisy', 'paramPesqDelta',
+        'ovSTOI', 'lblStoiNoisy', 'paramStoiDelta',
+      ].forEach(id => {
+        const element = document.getElementById(id);
+        if (element) element.textContent = '--';
+      });
+      return;
+    }
+    if (qualityStatus) {
+      qualityStatus.textContent = `${data.samples} samples | ${data.timestamp}`;
+      qualityStatus.removeAttribute('title');
+    }
 
     // SNR
     const elSNR = document.getElementById('ovSNR');

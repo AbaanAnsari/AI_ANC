@@ -8,11 +8,14 @@ Measures:
 - Real-Time Factor (RTF = hop_processing_time / 8.0 ms)
 - Memory usage if psutil is available
 """
+
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
+import platform
 import sys
 import time
 from pathlib import Path
@@ -26,7 +29,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.inference.streaming_pipeline import StreamingPipeline, SAMPLE_RATE, HOP_SIZE
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+)
 logger = logging.getLogger("realtime_benchmark")
 
 
@@ -36,12 +41,19 @@ def benchmark_streaming_latency(
     n_eval_hops: int = 500,
     device: str = "cpu",
 ) -> dict:
-    logger.info("Initializing StreamingPipeline from %s on %s...", checkpoint_path, device)
-    pipeline = StreamingPipeline(checkpoint_path=checkpoint_path, pipeline_mode="full_production", device=device)
+    checkpoint_path = Path(checkpoint_path).resolve()
+    logger.info(
+        "Initializing StreamingPipeline from %s on %s...", checkpoint_path, device
+    )
+    pipeline = StreamingPipeline(
+        checkpoint_path=checkpoint_path, pipeline_mode="full_production", device=device
+    )
 
     # Synthetic dual-mic input
     rng = np.random.default_rng(20260929)
-    m1_data = rng.normal(0, 0.1, (n_warmup_hops + n_eval_hops) * HOP_SIZE).astype(np.float32)
+    m1_data = rng.normal(0, 0.1, (n_warmup_hops + n_eval_hops) * HOP_SIZE).astype(
+        np.float32
+    )
     m2_data = np.roll(m1_data, 5)
 
     logger.info("Running %d warmup hops...", n_warmup_hops)
@@ -81,6 +93,7 @@ def benchmark_streaming_latency(
     mem_mb = None
     try:
         import psutil
+
         process = psutil.Process()
         mem_mb = float(process.memory_info().rss / (1024 * 1024))
     except ImportError:
@@ -88,7 +101,16 @@ def benchmark_streaming_latency(
 
     results = {
         "checkpoint": str(checkpoint_path),
+        "checkpoint_sha256": hashlib.file_digest(
+            checkpoint_path.open("rb"), "sha256"
+        ).hexdigest(),
         "device": device,
+        "host": {
+            "platform": platform.platform(),
+            "processor": platform.processor() or "unknown",
+            "python": platform.python_version(),
+            "pytorch": torch.__version__,
+        },
         "n_eval_hops": n_eval_hops,
         "hop_size_samples": HOP_SIZE,
         "hop_budget_ms": hop_budget_ms,
@@ -124,12 +146,18 @@ def test_realtime_performance_baseline():
     if not ckpt_path.exists():
         return
     res = benchmark_streaming_latency(ckpt_path, n_warmup_hops=20, n_eval_hops=100)
-    assert res["real_time_factor_rtf"] < 0.80, f"RTF {res['real_time_factor_rtf']} exceeds 0.80"
+    assert (
+        res["real_time_factor_rtf"] < 0.80
+    ), f"RTF {res['real_time_factor_rtf']} exceeds 0.80"
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Real-time latency benchmark")
-    parser.add_argument("--checkpoint", type=str, default=str(PROJECT_ROOT / "experiments" / "phase3_D" / "best_checkpoint.pt"))
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        default=str(PROJECT_ROOT / "experiments" / "phase3_D" / "best_checkpoint.pt"),
+    )
     parser.add_argument("--output", type=str, default=None)
     parser.add_argument("--hops", type=int, default=500)
     args = parser.parse_args()

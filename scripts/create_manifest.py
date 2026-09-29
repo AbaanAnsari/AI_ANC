@@ -21,9 +21,9 @@ import json
 import wave
 from pathlib import Path
 
-
-DEFAULT_ROOT = Path(r"D:\SIH\SIH_2026\data")
-DEFAULT_OUTPUT = Path("data/manifests/dataset_manifest.jsonl")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_ROOT = PROJECT_ROOT / "data" / "raw" / "dataset"
+DEFAULT_OUTPUT = PROJECT_ROOT / "data" / "manifests" / "dataset_manifest.jsonl"
 
 
 def metadata(path: Path):
@@ -35,9 +35,7 @@ def metadata(path: Path):
             "source_channels": w.getnchannels(),
             "source_sample_width_bytes": w.getsampwidth(),
             "source_frames": frames,
-            "duration_seconds": round(
-                frames / rate if rate else 0.0, 6
-            ),
+            "duration_seconds": round(frames / rate if rate else 0.0, 6),
         }
 
 
@@ -79,7 +77,6 @@ def make_record(root: Path, path: Path):
         "noise_class": None if noise_class == "clean" else noise_class,
         "noise_subclass": subclass,
         **meta,
-
         # Canonical internal processing contract.
         "internal_sample_rate_hz": 16000,
         "internal_channels": 1,
@@ -109,9 +106,7 @@ def main():
             else:
                 records.append(record)
         except Exception as exc:
-            raise SystemExit(
-                f"Could not read WAV metadata:\n{path}\n{exc}"
-            )
+            raise SystemExit(f"Could not read WAV metadata:\n{path}\n{exc}")
 
     # Recording identity must be unique.
     ids = [r["record_id"] for r in records]
@@ -125,7 +120,7 @@ def main():
 
     output = args.output
     if not output.is_absolute():
-        output = Path.cwd() / output
+        output = PROJECT_ROOT / output
     output.parent.mkdir(parents=True, exist_ok=True)
 
     with output.open("w", encoding="utf-8", newline="\n") as f:

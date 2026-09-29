@@ -1,0 +1,22 @@
+{
+  "checkpoint": "D:\\SIH\\AI_ANC\\experiments\\phase3_100ep\\best_checkpoint.pt",
+  "checkpoint_sha256": "086ddcbb74e57caadd7e8867b94085d37f99f84dad89251ab9a02dce7454350c",
+  "device": "cpu",
+  "host": {
+    "platform": "Windows-10-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 151 Stepping 2, GenuineIntel",
+    "python": "3.11.9",
+    "pytorch": "2.14.0+cpu"
+  },
+  "n_eval_hops": 500,
+  "hop_size_samples": 128,
+  "hop_budget_ms": 8.0,
+  "mean_ms_per_hop": 2.709,
+  "p50_ms_per_hop": 2.629,
+  "p95_ms_per_hop": 3.668,
+  "p99_ms_per_hop": 5.073,
+  "max_ms_per_hop": 5.543,
+  "real_time_factor_rtf": 0.3386,
+  "memory_rss_mb": 269.43,
+  "real_time_feasible": true
+}

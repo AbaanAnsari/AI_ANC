@@ -27,9 +27,11 @@ Rules:
     - All failures are recorded with reason
     - Resampling is documented
 """
+
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import sys
 import time
@@ -45,6 +47,8 @@ while script_dir in sys.path:
     sys.path.remove(script_dir)
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.project_paths import PHASE3_V2_CHECKPOINT, PHASE3_V2_MANIFEST_DIR
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -64,14 +68,12 @@ logger = logging.getLogger("evaluate_model")
 # ---------------------------------------------------------------------------
 
 SAMPLE_RATE = 16000
-SEGMENT_SAMPLES = 16000          # 1-second segments
+SEGMENT_SAMPLES = 16000  # 1-second segments
 DEFAULT_SNR_SET = [-5, 0, 5, 10, 15, 20]
 SEED = 20260925
 
-PHASE3_CHECKPOINT = PROJECT_ROOT / "experiments" / "phase3_H" / "best_checkpoint.pt"
-STEP6_CHECKPOINT = PROJECT_ROOT / "experiments" / "phase2_step6_targeted_crm_full" / "best_checkpoint.pt"
-BEST_CHECKPOINT = PHASE3_CHECKPOINT if PHASE3_CHECKPOINT.exists() else STEP6_CHECKPOINT
-TEST_MANIFEST = PROJECT_ROOT / "data" / "manifests" / "test_manifest.jsonl"
+BEST_CHECKPOINT = PHASE3_V2_CHECKPOINT
+TEST_MANIFEST = PHASE3_V2_MANIFEST_DIR / "test_manifest.jsonl"
 DATASET_ROOT = PROJECT_ROOT / "data" / "raw" / "dataset"
 
 # Max samples to evaluate (None = all)
@@ -83,8 +85,10 @@ MAX_SAMPLES: Optional[int] = None
 
 try:
     from pystoi import stoi as _pystoi_fn
+
     HAS_STOI = True
     import pystoi
+
     PYSTOI_VERSION = getattr(pystoi, "__version__", "0.4.1")
 except ImportError:
     HAS_STOI = False
@@ -92,8 +96,10 @@ except ImportError:
 
 try:
     from pesq import pesq as _pesq_fn, PesqError
+
     HAS_PESQ = True
     import pesq as _pesq_mod
+
     PESQ_VERSION = "0.0.4"  # pesq 0.0.4 has no __version__
 except ImportError:
     HAS_PESQ = False
@@ -118,10 +124,10 @@ from src.dsp.gcc_phat import gcc_phat
 from src.dsp.kalman import DelayKalmanFilter
 from evaluation.snr import compute_snr
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def align_lengths(*arrays):
     """Truncate all arrays to the shortest length."""
@@ -129,7 +135,9 @@ def align_lengths(*arrays):
     return tuple(a[:min_len] for a in arrays)
 
 
-def _safe_stoi(clean: np.ndarray, degraded: np.ndarray, extended: bool = False) -> Optional[float]:
+def _safe_stoi(
+    clean: np.ndarray, degraded: np.ndarray, extended: bool = False
+) -> Optional[float]:
     """Compute STOI; return None on error."""
     if not HAS_STOI:
         return None
@@ -144,6 +152,7 @@ def _safe_stoi(clean: np.ndarray, degraded: np.ndarray, extended: bool = False) 
             return None
         return float(_pystoi_fn(c, d, SAMPLE_RATE, extended=extended))
     except Exception as e:
+        logger.warning("STOI failed for one evaluation sample: %s", e)
         return None
 
 
@@ -158,7 +167,7 @@ def _safe_pesq(clean: np.ndarray, degraded: np.ndarray) -> tuple:
         c = np.asarray(clean, dtype=np.float32).ravel()
         d = np.asarray(degraded, dtype=np.float32).ravel()
         c, d = align_lengths(c, d)
-        if len(c) < 8000:   # PESQ needs at least ~0.5s
+        if len(c) < 8000:  # PESQ needs at least ~0.5s
             return None, f"too short: {len(c)} samples"
         if not (np.all(np.isfinite(c)) and np.all(np.isfinite(d))):
             return None, "non-finite values"
@@ -174,21 +183,28 @@ def _safe_pesq(clean: np.ndarray, degraded: np.ndarray) -> tuple:
 # Load model once
 # ---------------------------------------------------------------------------
 
-def load_frozen_model(checkpoint_path: Path, device: str = "cpu") -> LightweightCNNGRUMaskModel:
+
+def load_frozen_model(
+    checkpoint_path: Path, device: str = "cpu"
+) -> LightweightCNNGRUMaskModel:
     """Load LightweightCNNGRUMaskModel from checkpoint. Freeze in eval mode."""
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     model = LightweightCNNGRUMaskModel()
-    model.load_state_dict(ckpt["model_state_dict"])
+    model.load_state_dict(ckpt["model_state_dict"], strict=True)
     model.eval()
     model.to(torch.device(device))
     params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    logger.info("Loaded model: %d trainable params (epoch=%s)", params, ckpt.get("epoch", "?"))
+    logger.info(
+        "Loaded model: %d trainable params (epoch=%s)", params, ckpt.get("epoch", "?")
+    )
     return model, ckpt
 
 
-def model_enhance(model: LightweightCNNGRUMaskModel, m1_waveform: np.ndarray, device: str) -> tuple:
+def model_enhance(
+    model: LightweightCNNGRUMaskModel, m1_waveform: np.ndarray, device: str
+) -> tuple:
     """
     Run M1 waveform through the AI model and return enhanced waveform.
 
@@ -198,17 +214,19 @@ def model_enhance(model: LightweightCNNGRUMaskModel, m1_waveform: np.ndarray, de
     -------
     (enhanced_waveform, noise_class_pred, confidence)
     """
-    stft_complex = compute_stft(m1_waveform)   # (257, T) complex64
+    stft_complex = compute_stft(m1_waveform)  # (257, T) complex64
     stft_real = stft_complex.real.astype(np.float32)
     stft_imag = stft_complex.imag.astype(np.float32)
-    features = np.stack([stft_real, stft_imag], axis=0)[np.newaxis, :, :, :]  # (1,2,257,T)
+    features = np.stack([stft_real, stft_imag], axis=0)[
+        np.newaxis, :, :, :
+    ]  # (1,2,257,T)
 
     x = torch.from_numpy(features).to(torch.device(device))
     with torch.no_grad():
         enhanced_stft_t, logits_t, mask_t = model(x)
 
     enhanced_stft_np = enhanced_stft_t.squeeze(0).cpu().numpy()  # (2,257,T)
-    logits_np = logits_t.squeeze(0).cpu().numpy()                # (3,)
+    logits_np = logits_t.squeeze(0).cpu().numpy()  # (3,)
 
     # Softmax + argmax
     logits_shifted = logits_np - logits_np.max()
@@ -217,7 +235,9 @@ def model_enhance(model: LightweightCNNGRUMaskModel, m1_waveform: np.ndarray, de
     confidence = float(probs[noise_class_pred])
 
     # ISTFT: reconstruct waveform from enhanced complex STFT
-    enhanced_complex = (enhanced_stft_np[0] + 1j * enhanced_stft_np[1]).astype(np.complex64)
+    enhanced_complex = (enhanced_stft_np[0] + 1j * enhanced_stft_np[1]).astype(
+        np.complex64
+    )
     enhanced_waveform = compute_istft(enhanced_complex)  # (N,) float32
 
     return enhanced_waveform, noise_class_pred, confidence
@@ -226,6 +246,7 @@ def model_enhance(model: LightweightCNNGRUMaskModel, m1_waveform: np.ndarray, de
 # ---------------------------------------------------------------------------
 # Per-sample evaluation
 # ---------------------------------------------------------------------------
+
 
 def evaluate_one_sample(
     clean_record: dict,
@@ -281,7 +302,9 @@ def evaluate_one_sample(
         # 4. Mix at random SNR
         snr_idx = int(rng.integers(0, len(DEFAULT_SNR_SET)))
         target_snr = DEFAULT_SNR_SET[snr_idx]
-        noisy_m1, scaled_noise = mix_signals(clean_seg, noise_seg, target_snr_db=target_snr, rng=rng)
+        noisy_m1, scaled_noise = mix_signals(
+            clean_seg, noise_seg, target_snr_db=target_snr, rng=rng
+        )
 
         # 5. Dual-mic simulation
         delay = int(rng.integers(-20, 21))
@@ -309,7 +332,9 @@ def evaluate_one_sample(
         assert np.all(np.isfinite(clean_seg)), "clean_seg has non-finite values"
         assert np.all(np.isfinite(m1_aligned)), "noisy has non-finite values"
         assert np.all(np.isfinite(enhanced_aligned)), "enhanced has non-finite values"
-        assert len(clean_seg) == len(m1_aligned) == len(enhanced_aligned), "length mismatch"
+        assert (
+            len(clean_seg) == len(m1_aligned) == len(enhanced_aligned)
+        ), "length mismatch"
 
         # 9. SNR (using E[clean^2] / E[(clean - signal)^2])
         snr_noisy = compute_snr(clean_seg, m1_aligned)
@@ -322,7 +347,9 @@ def evaluate_one_sample(
         stoi_noisy = _safe_stoi(clean_seg, m1_aligned, extended=False)
         stoi_enhanced = _safe_stoi(clean_seg, enhanced_aligned, extended=False)
         result["stoi_noisy"] = round(stoi_noisy, 4) if stoi_noisy is not None else None
-        result["stoi_enhanced"] = round(stoi_enhanced, 4) if stoi_enhanced is not None else None
+        result["stoi_enhanced"] = (
+            round(stoi_enhanced, 4) if stoi_enhanced is not None else None
+        )
         if stoi_noisy is not None and stoi_enhanced is not None:
             result["stoi_improvement"] = round(stoi_enhanced - stoi_noisy, 4)
 
@@ -330,7 +357,9 @@ def evaluate_one_sample(
         pesq_noisy, pesq_noisy_err = _safe_pesq(clean_seg, m1_aligned)
         pesq_enhanced, pesq_enhanced_err = _safe_pesq(clean_seg, enhanced_aligned)
         result["pesq_noisy"] = round(pesq_noisy, 4) if pesq_noisy is not None else None
-        result["pesq_enhanced"] = round(pesq_enhanced, 4) if pesq_enhanced is not None else None
+        result["pesq_enhanced"] = (
+            round(pesq_enhanced, 4) if pesq_enhanced is not None else None
+        )
         result["pesq_noisy_error"] = pesq_noisy_err
         result["pesq_enhanced_error"] = pesq_enhanced_err
         if pesq_noisy is not None and pesq_enhanced is not None:
@@ -348,13 +377,23 @@ def evaluate_one_sample(
 # Aggregation
 # ---------------------------------------------------------------------------
 
+
 def aggregate_metrics(results: list) -> dict:
     """Aggregate per-sample results into mean/median/std/min/max."""
 
     def stats(vals):
-        arr = np.array([v for v in vals if v is not None and np.isfinite(v)], dtype=np.float64)
+        arr = np.array(
+            [v for v in vals if v is not None and np.isfinite(v)], dtype=np.float64
+        )
         if len(arr) == 0:
-            return {"mean": None, "median": None, "std": None, "min": None, "max": None, "count": 0}
+            return {
+                "mean": None,
+                "median": None,
+                "std": None,
+                "min": None,
+                "max": None,
+                "count": 0,
+            }
         return {
             "mean": round(float(np.mean(arr)), 4),
             "median": round(float(np.median(arr)), 4),
@@ -369,9 +408,14 @@ def aggregate_metrics(results: list) -> dict:
 
     # Classification accuracy
     correct = sum(
-        1 for r in ok_results
-        if r["noise_class_pred"] is not None and r["noise_class_true"] is not None
-        and {0: "stationary", 1: "non-stationary", 2: "impulsive"}.get(r["noise_class_pred"]) == r["noise_class_true"]
+        1
+        for r in ok_results
+        if r["noise_class_pred"] is not None
+        and r["noise_class_true"] is not None
+        and {0: "stationary", 1: "non-stationary", 2: "impulsive"}.get(
+            r["noise_class_pred"]
+        )
+        == r["noise_class_true"]
     )
     total_classified = len([r for r in ok_results if r["noise_class_pred"] is not None])
 
@@ -382,11 +426,18 @@ def aggregate_metrics(results: list) -> dict:
     for r in ok_results:
         if r["noise_class_true"] in class_total:
             class_total[r["noise_class_true"]] += 1
-            if r["noise_class_pred"] is not None and class_map.get(r["noise_class_pred"]) == r["noise_class_true"]:
+            if (
+                r["noise_class_pred"] is not None
+                and class_map.get(r["noise_class_pred"]) == r["noise_class_true"]
+            ):
                 class_correct[r["noise_class_true"]] += 1
 
     per_class_acc = {
-        nc: (round(class_correct[nc] / class_total[nc], 4) if class_total[nc] > 0 else None)
+        nc: (
+            round(class_correct[nc] / class_total[nc], 4)
+            if class_total[nc] > 0
+            else None
+        )
         for nc in class_total
     }
 
@@ -409,7 +460,9 @@ def aggregate_metrics(results: list) -> dict:
         "pesq_improvement": stats([r["pesq_improvement"] for r in ok_results]),
         "pesq_noisy_failure_count": pesq_noisy_failures,
         "pesq_enhanced_failure_count": pesq_enhanced_failures,
-        "classification_accuracy": round(correct / total_classified, 4) if total_classified > 0 else None,
+        "classification_accuracy": (
+            round(correct / total_classified, 4) if total_classified > 0 else None
+        ),
         "classification_correct": correct,
         "classification_total": total_classified,
         "per_class_accuracy": per_class_acc,
@@ -426,6 +479,7 @@ def aggregate_metrics(results: list) -> dict:
 # Main evaluation runner
 # ---------------------------------------------------------------------------
 
+
 def run_evaluation(
     checkpoint_path: Path = BEST_CHECKPOINT,
     test_manifest: Path = TEST_MANIFEST,
@@ -440,7 +494,30 @@ def run_evaluation(
 
     Returns aggregated metrics dict.
     """
+    checkpoint_path = Path(checkpoint_path).resolve()
+    test_manifest = Path(test_manifest).resolve()
+    dataset_root = Path(dataset_root).resolve()
     t_start = time.perf_counter()
+
+    from scripts.audit_manifest_leakage import audit_manifests
+
+    manifest_dir = test_manifest.parent
+    try:
+        leakage_errors = audit_manifests(
+            {
+                "train": manifest_dir / "train_manifest.jsonl",
+                "validation": manifest_dir / "val_manifest.jsonl",
+                "test": test_manifest,
+            },
+            dataset_root,
+        )
+        if leakage_errors:
+            logger.warning(
+                "Held-out manifest audit produced %d leakage/integrity finding(s); continuing evaluation.",
+                len(leakage_errors),
+            )
+    except Exception as exc:
+        logger.warning("Manifest audit warning: %s", exc)
 
     set_seed(seed)
     rng = np.random.default_rng(seed)
@@ -479,7 +556,9 @@ def run_evaluation(
     # Limit samples if requested
     if max_samples is not None:
         clean_records = clean_records[:max_samples]
-        logger.info("Evaluating on %d samples (limited by max_samples)", len(clean_records))
+        logger.info(
+            "Evaluating on %d samples (limited by max_samples)", len(clean_records)
+        )
     else:
         logger.info("Evaluating on ALL %d clean test samples", len(clean_records))
 
@@ -499,12 +578,24 @@ def run_evaluation(
 
         if (i + 1) % 20 == 0 or (i + 1) == len(clean_records):
             ok_so_far = sum(1 for x in all_results if x["status"] == "ok")
-            logger.info("Progress: %d/%d  (ok=%d)", i + 1, len(clean_records), ok_so_far)
+            logger.info(
+                "Progress: %d/%d  (ok=%d)", i + 1, len(clean_records), ok_so_far
+            )
 
     # Aggregate
     agg = aggregate_metrics(all_results)
     agg["model_epoch"] = model_epoch
     agg["checkpoint_path"] = str(checkpoint_path)
+    agg["checkpoint_sha256"] = hashlib.file_digest(
+        checkpoint_path.open("rb"), "sha256"
+    ).hexdigest()
+    agg["test_manifest_path"] = test_manifest.relative_to(PROJECT_ROOT).as_posix()
+    agg["test_manifest_sha256"] = hashlib.file_digest(
+        test_manifest.open("rb"), "sha256"
+    ).hexdigest()
+    agg["model_parameter_count"] = sum(
+        parameter.numel() for parameter in model.parameters() if parameter.requires_grad
+    )
     agg["evaluation_duration_s"] = round(time.perf_counter() - t_start, 2)
 
     # Save results
@@ -529,6 +620,7 @@ def run_evaluation(
 # ---------------------------------------------------------------------------
 # Report printer
 # ---------------------------------------------------------------------------
+
 
 def print_final_report(agg: dict):
     """Print the mandatory final metric table to stdout."""
@@ -564,7 +656,9 @@ def print_final_report(agg: dict):
     print("  PESQ: pesq 0.0.4   | 16 kHz | wideband (wb) | no resampling")
     print()
     print("-" * 75)
-    print(f"  {'Metric':<20} {'Noisy Input':>12} {'Enhanced':>12} {'Improvement':>12}  {'Target':>10}")
+    print(
+        f"  {'Metric':<20} {'Noisy Input':>12} {'Enhanced':>12} {'Improvement':>12}  {'Target':>10}"
+    )
     print("-" * 75)
 
     snr_imp = agg.get("snr_improvement", {})
@@ -578,48 +672,94 @@ def print_final_report(agg: dict):
     pesq_n_mean = agg.get("pesq_noisy", {}).get("mean")
     pesq_e_mean = agg.get("pesq_enhanced", {}).get("mean")
 
-    def _fv(v): return f"{v:.4f}" if v is not None else "N/A"
-    def _fi(v): return (f"+{v:.4f}" if v > 0 else f"{v:.4f}") if v is not None else "N/A"
+    def _fv(v):
+        return f"{v:.4f}" if v is not None else "N/A"
 
-    snr_imp_v = (snr_e_mean - snr_n_mean) if (snr_e_mean is not None and snr_n_mean is not None) else None
-    stoi_imp_v = (stoi_e_mean - stoi_n_mean) if (stoi_e_mean is not None and stoi_n_mean is not None) else None
-    pesq_imp_v = (pesq_e_mean - pesq_n_mean) if (pesq_e_mean is not None and pesq_n_mean is not None) else None
+    def _fi(v):
+        return (f"+{v:.4f}" if v > 0 else f"{v:.4f}") if v is not None else "N/A"
+
+    snr_imp_v = (
+        (snr_e_mean - snr_n_mean)
+        if (snr_e_mean is not None and snr_n_mean is not None)
+        else None
+    )
+    stoi_imp_v = (
+        (stoi_e_mean - stoi_n_mean)
+        if (stoi_e_mean is not None and stoi_n_mean is not None)
+        else None
+    )
+    pesq_imp_v = (
+        (pesq_e_mean - pesq_n_mean)
+        if (pesq_e_mean is not None and pesq_n_mean is not None)
+        else None
+    )
 
     snr_met = "[NOT MET]" if snr_imp_v is None or snr_imp_v < 15 else "[MET]"
     stoi_met = "[NOT MET]" if stoi_e_mean is None or stoi_e_mean < 0.85 else "[MET]"
     pesq_met = "[NOT MET]" if pesq_e_mean is None or pesq_e_mean < 2.5 else "[MET]"
 
-    print(f"  {'SNR (dB)':<20} {_fv(snr_n_mean):>12} {_fv(snr_e_mean):>12} {_fi(snr_imp_v):>12}  {'> +15 dB':>10}  {snr_met}")
-    print(f"  {'STOI':<20} {_fv(stoi_n_mean):>12} {_fv(stoi_e_mean):>12} {_fi(stoi_imp_v):>12}  {'> 0.85':>10}  {stoi_met}")
-    print(f"  {'PESQ':<20} {_fv(pesq_n_mean):>12} {_fv(pesq_e_mean):>12} {_fi(pesq_imp_v):>12}  {'> 2.5':>10}  {pesq_met}")
+    print(
+        f"  {'SNR (dB)':<20} {_fv(snr_n_mean):>12} {_fv(snr_e_mean):>12} {_fi(snr_imp_v):>12}  {'> +15 dB':>10}  {snr_met}"
+    )
+    print(
+        f"  {'STOI':<20} {_fv(stoi_n_mean):>12} {_fv(stoi_e_mean):>12} {_fi(stoi_imp_v):>12}  {'> 0.85':>10}  {stoi_met}"
+    )
+    print(
+        f"  {'PESQ':<20} {_fv(pesq_n_mean):>12} {_fv(pesq_e_mean):>12} {_fi(pesq_imp_v):>12}  {'> 2.5':>10}  {pesq_met}"
+    )
     print("-" * 75)
 
     print()
     print("  Detailed statistics (mean +/- std):")
-    print(f"    SNR noisy:       {_fv(snr_n_mean)} +/- {_fv(agg.get('snr_noisy',{}).get('std'))}")
-    print(f"    SNR enhanced:    {_fv(snr_e_mean)} +/- {_fv(agg.get('snr_enhanced',{}).get('std'))}")
-    print(f"    STOI noisy:      {_fv(stoi_n_mean)} +/- {_fv(agg.get('stoi_noisy',{}).get('std'))}")
-    print(f"    STOI enhanced:   {_fv(stoi_e_mean)} +/- {_fv(agg.get('stoi_enhanced',{}).get('std'))}")
-    print(f"    PESQ noisy:      {_fv(pesq_n_mean)} +/- {_fv(agg.get('pesq_noisy',{}).get('std'))}")
-    print(f"    PESQ enhanced:   {_fv(pesq_e_mean)} +/- {_fv(agg.get('pesq_enhanced',{}).get('std'))}")
+    print(
+        f"    SNR noisy:       {_fv(snr_n_mean)} +/- {_fv(agg.get('snr_noisy',{}).get('std'))}"
+    )
+    print(
+        f"    SNR enhanced:    {_fv(snr_e_mean)} +/- {_fv(agg.get('snr_enhanced',{}).get('std'))}"
+    )
+    print(
+        f"    STOI noisy:      {_fv(stoi_n_mean)} +/- {_fv(agg.get('stoi_noisy',{}).get('std'))}"
+    )
+    print(
+        f"    STOI enhanced:   {_fv(stoi_e_mean)} +/- {_fv(agg.get('stoi_enhanced',{}).get('std'))}"
+    )
+    print(
+        f"    PESQ noisy:      {_fv(pesq_n_mean)} +/- {_fv(agg.get('pesq_noisy',{}).get('std'))}"
+    )
+    print(
+        f"    PESQ enhanced:   {_fv(pesq_e_mean)} +/- {_fv(agg.get('pesq_enhanced',{}).get('std'))}"
+    )
     print(f"    PESQ noisy failures:    {agg.get('pesq_noisy_failure_count', 0)}")
     print(f"    PESQ enhanced failures: {agg.get('pesq_enhanced_failure_count', 0)}")
     print()
     print(f"  Classification Accuracy: {agg.get('classification_accuracy', 'N/A')}")
-    print(f"    Stationary:     {agg.get('per_class_accuracy',{}).get('stationary','N/A')}")
-    print(f"    Non-stationary: {agg.get('per_class_accuracy',{}).get('non-stationary','N/A')}")
-    print(f"    Impulsive:      {agg.get('per_class_accuracy',{}).get('impulsive','N/A')}")
+    print(
+        f"    Stationary:     {agg.get('per_class_accuracy',{}).get('stationary','N/A')}"
+    )
+    print(
+        f"    Non-stationary: {agg.get('per_class_accuracy',{}).get('non-stationary','N/A')}"
+    )
+    print(
+        f"    Impulsive:      {agg.get('per_class_accuracy',{}).get('impulsive','N/A')}"
+    )
     print()
     print("  MANDATORY SUMMARY:")
-    print(f"    STOI: noisy={_fv(stoi_n_mean)}, enhanced={_fv(stoi_e_mean)}, improvement={_fi(stoi_imp_v)}")
-    print(f"    PESQ: noisy={_fv(pesq_n_mean)}, enhanced={_fv(pesq_e_mean)}, improvement={_fi(pesq_imp_v)}")
-    print(f"    SNR:  noisy={_fv(snr_n_mean)}, enhanced={_fv(snr_e_mean)}, improvement={_fi(snr_imp_v)}")
+    print(
+        f"    STOI: noisy={_fv(stoi_n_mean)}, enhanced={_fv(stoi_e_mean)}, improvement={_fi(stoi_imp_v)}"
+    )
+    print(
+        f"    PESQ: noisy={_fv(pesq_n_mean)}, enhanced={_fv(pesq_e_mean)}, improvement={_fi(pesq_imp_v)}"
+    )
+    print(
+        f"    SNR:  noisy={_fv(snr_n_mean)}, enhanced={_fv(snr_e_mean)}, improvement={_fi(snr_imp_v)}"
+    )
     print()
     print("=" * 75)
 
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="AETHEL123 Final Evaluation")
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--device", default="cpu")

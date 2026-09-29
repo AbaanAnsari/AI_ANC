@@ -1,7 +1,17 @@
 # AI-DRIVEN NOISE CANCELLATION & SPEECH ENHANCEMENT
 
 **Project ID:** AETHEL123  
-**Development Strategy:** Desktop real-time simulation first → validated implementation → STM32H753ZI deployment
+**Development Strategy:** Synthetic simulation and desktop streaming → physical audio validation → possible embedded evaluation
+
+## Current Status (2026-09-30)
+
+The implemented enhancement model is `LightweightCNNGRUMaskModel` with 70,789 trainable parameters. The active Phase 3 experiment is `experiments/phase3_100ep/best_checkpoint.pt` (best validation epoch 68). A fresh seed-controlled synthetic benchmark records +6.76 dB AI-only and +5.63 dB full-production mean delta SNR across 12 cases. Offline/streaming correlation is 0.999479. A fresh 500-hop CPU software benchmark recorded mean 2.709 ms/hop, p95 3.668 ms, p99 5.073 ms, max 5.543 ms, RTF 0.3386, and RSS 269.43 MB. These are synthetic/software results, not physical ANC results.
+
+The Phase 3 v2 manifests currently fail the stronger identity/hash leakage audit with 612 findings, including 56 cross-split file-content overlaps; clean filenames also do not provide verifiable speaker IDs for a subset of records. Held-out scoring is therefore blocked. A prior stored held-out result reports +5.06 dB and 47.14% classification accuracy, but it is not valid evidence for a leakage-free test set and is rejected by the dashboard API because it lacks matching provenance. Do not describe these manifests as speaker-disjoint or leakage-free until they are repaired and the model is re-evaluated. The historical checkpoints and reported scores have not been rewritten.
+
+Physical microphone coupling, room acoustics, real ADC/DAC latency, and STM32H753ZI operation have not been validated. The algorithmic lookahead/WOLA delay is 768 samples (48 ms at 16 kHz); it is not total hardware or end-to-end system latency. See [Known Limitations](#known-limitations) before interpreting benchmark results.
+
+The design sections below describe the intended architecture and workflow. Where they conflict with this current-status section, the measured implementation status above takes precedence.
 
 ---
 
@@ -19,9 +29,9 @@ The project is **not an AI-only denoising system**. The central design is an **A
 - The reference microphone supplies correlated-noise information to the adaptive NLMS canceller.
 - GCC-PHAT, Kalman filtering, VAD, speech protection, adaptive fusion and a safety limiter support and protect the complete pipeline.
 
-The first implementation will run as a **true continuous desktop streaming system using the laptop's physical 2-channel microphone array and a user-selected audio output device**. It will not use a record-then-play workflow.
+The desktop application supports continuous OS audio streaming. Physical microphone array behavior and acoustic ANC performance have not yet been validated; synthetic dual-microphone results must not be presented as hardware validation.
 
-After the desktop system is validated, the design will be optimized and mapped to the **STM32H753ZI** for embedded real-time operation.
+STM32H753ZI deployment is a future evaluation target, not a validated capability.
 
 ---
 
@@ -272,7 +282,7 @@ Initial implementation:
 
 ### Enhancement output
 
-The initial model will use a lightweight spectral enhancement formulation, with the exact mask/output parameterization finalized during Phase 2 model design and validation.
+The current implementation predicts a bounded complex ratio mask (CRM) over the input STFT. The selected model is `LightweightCNNGRUMaskModel`; its trainable parameter count is 70,789.
 
 ### Classification output
 
@@ -346,10 +356,10 @@ The following values are the initial implementation targets and may be tuned onl
 | Initial training segment | **1 second** |
 | Samples per training segment | **16,000** |
 | STFT FFT size | **512** |
-| STFT hop length | **256** |
+| STFT hop length | **128** |
 | STFT window length | **512** |
 | STFT window | **Hann** |
-| Initial SNR range | **-5, 0, 5, 10, 15, 20 dB** |
+| Training SNR choices | **-5, 0, 5, 10, 15, 20 dB** |
 | Dataset split | **70% / 15% / 15%** |
 | Split level | **Original recordings**, before segmentation |
 | AI architecture | **CNN + lightweight GRU** |
@@ -378,9 +388,9 @@ Input:  Noisy speech
 Target: Stationary / Non-stationary / Impulsive
 ```
 
-### Candidate combined loss
+### Phase 3 v2 combined loss
 
-The training framework will support a multi-objective loss of the form:
+The Phase 3 training entry point uses a multi-objective loss with configured weights:
 
 ```text
 L_total = λ1 L_enhancement
@@ -389,7 +399,7 @@ L_total = λ1 L_enhancement
         + λ4 L_classification
 ```
 
-The exact loss weights are **not yet locked** and will be selected through controlled experiments.
+Mask 0.30, reconstruction 0.15, SI-SDR 0.30, multi-resolution STFT 0.15, energy 0.10, and classification 0.10. These settings are recorded in the checkpoint configuration; historical experiment settings may differ.
 
 Potential evaluation metrics include:
 
@@ -435,16 +445,16 @@ The two channels will have controlled differences such as:
 
 This gives GCC-PHAT and NLMS meaningful reference information.
 
-### Mode B — Real-Time Desktop Hardware
+### Mode B — Future Physical Desktop Validation
 
-Use the laptop's actual two-channel microphone array directly.
+Use an actual two-channel microphone array only during a separately documented physical validation session. No such validation is currently claimed.
 
 ```text
 Physical Mic Ch 1 → M1
 Physical Mic Ch 2 → M2
 ```
 
-No prerecorded audio is used to pretend that the physical microphone is live.
+Synthetic mixtures are used for the reported offline benchmarks. They do not establish real-world microphone coupling or physical noise cancellation.
 
 ---
 
@@ -495,5 +505,29 @@ AI + Adaptive NLMS Output
 ```
 
 This comparison is important for demonstrating the contribution of the adaptive NLMS stage.
+
+## Known Limitations
+
+- The reported speech-enhancement and ablation values use synthetic dual-microphone mixtures. The Phase 3 v2 manifests currently fail a stronger content-hash audit; speaker-disjoint test performance is therefore **BLOCKED** pending data repair and re-evaluation.
+- The classifier remains modest (47.14% accuracy and macro-F1 0.466 in the stored Phase 3 100-epoch report). Do not infer downstream benefit from classification accuracy alone.
+- The synthetic acoustic path does not establish microphone frequency response, microphone self-noise, acoustic coupling, room reverberation, transducer nonlinearities, physical microphone spacing, clock drift, or acoustic-feedback stability.
+- ADC/DAC, operating-system, and transducer latency have not been measured. The 768-sample / 48 ms value is algorithmic WOLA/lookahead delay only.
+- The available CPU real-time benchmark is not a physical ANC or embedded benchmark. STM32H753ZI operator support, activation memory, peak RAM, MAC count, and on-target timing are **NOT TESTED**.
+- `data/raw/**` is git-ignored, and no dataset download or external artifact-storage mechanism is configured. A fresh clone needs the exact source corpus provisioned separately; current manifest/source hashes should be checked before attempting reproduction.
+- Historical reports contain older numbers and claims. Use results tied to the checkpoint hash and manifest hashes in `experiments/phase3_100ep/metadata.json`; the recorded training hardware and original package environment are unavailable.
+
+## Reproduction and Audit Commands
+
+Run from the repository root:
+
+```powershell
+python scripts/verify_dataset.py
+python scripts/audit_manifest_leakage.py
+python scripts/validate_checkpoint.py experiments/phase3_100ep/best_checkpoint.pt --metadata-output experiments/phase3_100ep/metadata.json
+python -m pytest -q
+python scripts/run_phase3_full_evaluation.py --checkpoint experiments/phase3_100ep/best_checkpoint.pt
+```
+
+The stronger leakage audit currently exits nonzero for the checked-in Phase 3 v2 manifests. Do not use the full-evaluation command to support speaker-disjoint claims until that audit passes and the evaluation is rerun on repaired splits.
 
 ---

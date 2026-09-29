@@ -1,0 +1,5 @@
+{
+  "evaluation_status": "BLOCKED",
+  "blocking_findings": 612,
+  "reason": "Train/validation/test manifests fail the source identity and content-hash audit."
+}

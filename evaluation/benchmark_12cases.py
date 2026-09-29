@@ -13,15 +13,17 @@ Configurations Compared:
     E. Corrected full production (corrected AI + NLMS + smoothed VAD + speech protection + limiter)
     F. Oracle AI-only (clean speech directly, DSP OFF)
     G. Oracle full production (clean speech into downstream DSP)
-    
+
     Plus Oracle DSP Ablations:
     - Oracle + no speech floor
     - Oracle + NLMS disabled
     - Oracle + fusion disabled
 """
+
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import sys
 import time
@@ -40,31 +42,59 @@ from src.data.mixer import mix_signals, match_noise_length
 from src.data.dual_mic import simulate_dual_mic
 from src.features.stft import compute_stft, compute_istft
 from src.models.cnn_gru_mask import LightweightCNNGRUMaskModel
-from src.inference.streaming_pipeline import StreamingPipeline, HOP_SIZE, N_FFT, SAMPLE_RATE
+from src.inference.streaming_pipeline import (
+    StreamingPipeline,
+    HOP_SIZE,
+    N_FFT,
+    SAMPLE_RATE,
+)
 from src.inference.ai_inference import AIInferenceWrapper
+from src.project_paths import PHASE3_V2_CHECKPOINT
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+)
 logger = logging.getLogger("benchmark_12cases")
 
-CHECKPOINT_PATH = PROJECT_ROOT / "experiments" / "phase3_D" / "best_checkpoint.pt"
+CHECKPOINT_PATH = PHASE3_V2_CHECKPOINT
 DATASET_ROOT = PROJECT_ROOT / "data" / "raw" / "dataset"
 
 NOISE_FILES = {
-    "fan": DATASET_ROOT / "noise" / "stationary" / "fan" / "section_00_source_train_normal_0008_strength_1_ambient.wav",
-    "helicopter": DATASET_ROOT / "noise" / "non-stationary" / "helicopter" / "25th_Huey_Helicopter_no_music_01.wav",
+    "fan": DATASET_ROOT
+    / "noise"
+    / "stationary"
+    / "fan"
+    / "section_00_source_train_normal_0008_strength_1_ambient.wav",
+    "helicopter": DATASET_ROOT
+    / "noise"
+    / "non-stationary"
+    / "helicopter"
+    / "25th_Huey_Helicopter_no_music_01.wav",
     "siren": DATASET_ROOT / "noise" / "non-stationary" / "siren" / "sound_601.wav",
-    "drone": DATASET_ROOT / "noise" / "non-stationary" / "drone" / "B_S2_D1_067-bebop_000_.wav",
+    "drone": DATASET_ROOT
+    / "noise"
+    / "non-stationary"
+    / "drone"
+    / "B_S2_D1_067-bebop_000_.wav",
 }
 CLEAN_SPEECH_FILE = DATASET_ROOT / "clean" / "1098-133695-0000.wav"
 SNR_LEVELS = [0.0, 5.0, 10.0]
+DEFAULT_BENCHMARK_SEED = 20260929
 
 
-def compute_metrics(clean: np.ndarray, noisy: np.ndarray, enhanced: np.ndarray, delay: int = 0) -> Tuple[float, float, float]:
+def _sha256_file(path: Path) -> str:
+    with path.open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
+
+
+def compute_metrics(
+    clean: np.ndarray, noisy: np.ndarray, enhanced: np.ndarray, delay: int = 0
+) -> Tuple[float, float, float]:
     """Compute input SNR, output SNR, and SNR improvement with delay alignment."""
     min_len = min(len(clean), len(noisy), len(enhanced))
     if delay > 0 and min_len > delay + 256:
-        c_eval = clean[:min_len - delay]
-        n_eval = noisy[:min_len - delay]
+        c_eval = clean[: min_len - delay]
+        n_eval = noisy[: min_len - delay]
         e_eval = enhanced[delay:min_len]
     else:
         c_eval = clean[:min_len]
@@ -72,8 +102,8 @@ def compute_metrics(clean: np.ndarray, noisy: np.ndarray, enhanced: np.ndarray, 
         e_eval = enhanced[:min_len]
 
     p_clean = float(np.mean(c_eval**2))
-    p_noise_in = float(np.mean((n_eval - c_eval)**2) + 1e-15)
-    p_noise_out = float(np.mean((e_eval - c_eval)**2) + 1e-15)
+    p_noise_in = float(np.mean((n_eval - c_eval) ** 2) + 1e-15)
+    p_noise_out = float(np.mean((e_eval - c_eval) ** 2) + 1e-15)
 
     snr_in = 10.0 * np.log10(p_clean / p_noise_in)
     snr_out = 10.0 * np.log10(p_clean / p_noise_out)
@@ -81,10 +111,14 @@ def compute_metrics(clean: np.ndarray, noisy: np.ndarray, enhanced: np.ndarray, 
     return float(snr_in), float(snr_out), float(snr_imp)
 
 
-def run_original_offline(model: LightweightCNNGRUMaskModel, m1: np.ndarray) -> np.ndarray:
+def run_original_offline(
+    model: LightweightCNNGRUMaskModel, m1: np.ndarray
+) -> np.ndarray:
     """Original offline full-sequence 1-second inference with scipy STFT."""
     stft_c = compute_stft(m1)
-    feat = np.stack([stft_c.real.astype(np.float32), stft_c.imag.astype(np.float32)], axis=0)[np.newaxis, :, :, :]
+    feat = np.stack(
+        [stft_c.real.astype(np.float32), stft_c.imag.astype(np.float32)], axis=0
+    )[np.newaxis, :, :, :]
     x = torch.from_numpy(feat)
     with torch.no_grad():
         enh_t, _, _ = model(x)
@@ -93,13 +127,15 @@ def run_original_offline(model: LightweightCNNGRUMaskModel, m1: np.ndarray) -> n
     return compute_istft(enh_c, length=len(m1))
 
 
-def run_original_streaming(model: LightweightCNNGRUMaskModel, m1: np.ndarray, m2: np.ndarray) -> np.ndarray:
+def run_original_streaming(
+    model: LightweightCNNGRUMaskModel, m1: np.ndarray, m2: np.ndarray
+) -> np.ndarray:
     """Simulate the original flawed streaming implementation:
-       - Raw FFT without 1/win.sum() scaling (+48.16 dB magnitude mismatch)
-       - 1-frame context with zero padding at CNN layers
-       - 384-sample FIFO delay (24 ms phase error with WOLA)
-       - Unstable frame VAD with raw speech protection forcing 50% noisy leakage
-       - Fixed 50% fusion weight
+    - Raw FFT without 1/win.sum() scaling (+48.16 dB magnitude mismatch)
+    - 1-frame context with zero padding at CNN layers
+    - 384-sample FIFO delay (24 ms phase error with WOLA)
+    - Unstable frame VAD with raw speech protection forcing 50% noisy leakage
+    - Fixed 50% fusion weight
     """
     from src.dsp.vad import VoiceActivityDetector
     from src.dsp.nlms import AdaptiveNLMSController
@@ -140,7 +176,9 @@ def run_original_streaming(model: LightweightCNNGRUMaskModel, m1: np.ndarray, m2
         x = torch.from_numpy(feat).unsqueeze(0).float()
 
         with torch.no_grad():
-            enh_t, logits_t, _, next_h = model(x, hidden_state=hidden, return_hidden=True)
+            enh_t, logits_t, _, next_h = model(
+                x, hidden_state=hidden, return_hidden=True
+            )
             hidden = next_h
 
         enh_np = enh_t.squeeze(0).cpu().numpy()
@@ -172,7 +210,12 @@ def run_original_streaming(model: LightweightCNNGRUMaskModel, m1: np.ndarray, m2
     return np.concatenate(out_chunks)
 
 
-def run_streaming_pipeline(pipeline: StreamingPipeline, m1: np.ndarray, m2: np.ndarray, clean: np.ndarray = None) -> np.ndarray:
+def run_streaming_pipeline(
+    pipeline: StreamingPipeline,
+    m1: np.ndarray,
+    m2: np.ndarray,
+    clean: np.ndarray = None,
+) -> np.ndarray:
     """Feed audio through StreamingPipeline in 128-sample hops."""
     pipeline.reset()
     out_chunks = []
@@ -191,7 +234,9 @@ def run_streaming_pipeline(pipeline: StreamingPipeline, m1: np.ndarray, m2: np.n
     # Flush end of stream
     if pipeline.enable_ai:
         silence = np.zeros(128 * 3, dtype=np.float32)
-        pipeline.push(silence, silence, clean_samples=silence if clean is not None else None)
+        pipeline.push(
+            silence, silence, clean_samples=silence if clean is not None else None
+        )
         pipeline.process_available()
         out = pipeline.read_output(pipeline._output_buffer.available)
         if len(out) > 0:
@@ -202,12 +247,15 @@ def run_streaming_pipeline(pipeline: StreamingPipeline, m1: np.ndarray, m2: np.n
     return np.concatenate(out_chunks)
 
 
-def run_all_benchmarks(checkpoint_path: Path | None = None) -> Dict[str, Any]:
+def run_all_benchmarks(
+    checkpoint_path: Path | None = None,
+    seed: int = DEFAULT_BENCHMARK_SEED,
+) -> Dict[str, Any]:
     ckpt_path = Path(checkpoint_path) if checkpoint_path else CHECKPOINT_PATH
     logger.info("Loading model from %s...", ckpt_path)
     ckpt = torch.load(ckpt_path, map_location="cpu")
     model = LightweightCNNGRUMaskModel()
-    model.load_state_dict(ckpt["model_state_dict"])
+    model.load_state_dict(ckpt["model_state_dict"], strict=True)
     model.eval()
 
     logger.info("Loading clean speech and noise files...")
@@ -218,30 +266,94 @@ def run_all_benchmarks(checkpoint_path: Path | None = None) -> Dict[str, Any]:
 
     # Pre-load noise sources
     noise_sources = {}
-    for ntype, npath in NOISE_FILES.items():
+    source_hashes = {"clean": _sha256_file(CLEAN_SPEECH_FILE)}
+    for noise_index, (ntype, npath) in enumerate(NOISE_FILES.items()):
         n_raw = load_audio(npath, target_sr=SAMPLE_RATE)
-        noise_sources[ntype] = match_noise_length(n_raw, seg_len)
+        noise_sources[ntype] = match_noise_length(
+            n_raw, seg_len, rng=np.random.default_rng(seed + noise_index)
+        )
+        source_hashes[ntype] = _sha256_file(npath)
 
     # Instantiate pipelines
     pipe_ai_only = StreamingPipeline(ckpt_path, device="cpu", pipeline_mode="ai_only")
-    pipe_ai_nlms = StreamingPipeline(ckpt_path, device="cpu", pipeline_mode="ai_plus_nlms", nlms_weight=0.2)
-    pipe_prod = StreamingPipeline(ckpt_path, device="cpu", pipeline_mode="full_production")
-    
+    pipe_ai_nlms = StreamingPipeline(
+        ckpt_path, device="cpu", pipeline_mode="ai_plus_nlms", nlms_weight=0.2
+    )
+    pipe_prod = StreamingPipeline(
+        ckpt_path, device="cpu", pipeline_mode="full_production"
+    )
+
     # Oracle pipelines
-    pipe_oracle_ai = StreamingPipeline(ckpt_path, device="cpu", pipeline_mode="oracle", enable_nlms=False, enable_fusion=False, enable_vad=False, enable_limiter=False)
-    pipe_oracle_prod = StreamingPipeline(ckpt_path, device="cpu", pipeline_mode="oracle", enable_nlms=True, enable_fusion=True, enable_vad=True, enable_limiter=True, speech_protection_enabled=True)
-    pipe_oracle_no_floor = StreamingPipeline(ckpt_path, device="cpu", pipeline_mode="oracle", enable_nlms=True, enable_fusion=True, enable_vad=True, enable_limiter=True, speech_protection_enabled=False)
-    pipe_oracle_no_nlms = StreamingPipeline(ckpt_path, device="cpu", pipeline_mode="oracle", enable_nlms=False, enable_fusion=True, enable_vad=True, enable_limiter=True, speech_protection_enabled=True)
-    pipe_oracle_no_fusion = StreamingPipeline(ckpt_path, device="cpu", pipeline_mode="oracle", enable_nlms=True, enable_fusion=False, enable_vad=True, enable_limiter=True, speech_protection_enabled=True)
+    pipe_oracle_ai = StreamingPipeline(
+        ckpt_path,
+        device="cpu",
+        pipeline_mode="oracle",
+        enable_nlms=False,
+        enable_fusion=False,
+        enable_vad=False,
+        enable_limiter=False,
+    )
+    pipe_oracle_prod = StreamingPipeline(
+        ckpt_path,
+        device="cpu",
+        pipeline_mode="oracle",
+        enable_nlms=True,
+        enable_fusion=True,
+        enable_vad=True,
+        enable_limiter=True,
+        speech_protection_enabled=True,
+    )
+    pipe_oracle_no_floor = StreamingPipeline(
+        ckpt_path,
+        device="cpu",
+        pipeline_mode="oracle",
+        enable_nlms=True,
+        enable_fusion=True,
+        enable_vad=True,
+        enable_limiter=True,
+        speech_protection_enabled=False,
+    )
+    pipe_oracle_no_nlms = StreamingPipeline(
+        ckpt_path,
+        device="cpu",
+        pipeline_mode="oracle",
+        enable_nlms=False,
+        enable_fusion=True,
+        enable_vad=True,
+        enable_limiter=True,
+        speech_protection_enabled=True,
+    )
+    pipe_oracle_no_fusion = StreamingPipeline(
+        ckpt_path,
+        device="cpu",
+        pipeline_mode="oracle",
+        enable_nlms=True,
+        enable_fusion=False,
+        enable_vad=True,
+        enable_limiter=True,
+        speech_protection_enabled=True,
+    )
 
     results = []
 
+    case_index = 0
     for ntype in ["fan", "helicopter", "siren", "drone"]:
         noise_seg = noise_sources[ntype]
         for snr_target in SNR_LEVELS:
-            logger.info("Evaluating Case: Noise=%s, Input SNR=%.1f dB...", ntype, snr_target)
-            noisy_speech, scaled_noise = mix_signals(clean_seg, noise_seg, target_snr_db=snr_target)
-            m1, m2 = simulate_dual_mic(clean_speech=clean_seg, scaled_noise=scaled_noise, relative_delay_samples=5)
+            logger.info(
+                "Evaluating Case: Noise=%s, Input SNR=%.1f dB...", ntype, snr_target
+            )
+            case_seed = seed + 100 + case_index
+            case_rng = np.random.default_rng(case_seed)
+            noisy_speech, scaled_noise = mix_signals(
+                clean_seg, noise_seg, target_snr_db=snr_target, rng=case_rng
+            )
+            m1, m2 = simulate_dual_mic(
+                clean_speech=clean_seg,
+                scaled_noise=scaled_noise,
+                relative_delay_samples=5,
+                rng=case_rng,
+            )
 
             # A. Original Offline
             out_a = run_original_offline(model, m1)
@@ -253,37 +365,69 @@ def run_all_benchmarks(checkpoint_path: Path | None = None) -> Dict[str, Any]:
 
             # C. Corrected Streaming AI-Only
             out_c = run_streaming_pipeline(pipe_ai_only, m1, m2)
-            sin_c, sout_c, imp_c = compute_metrics(clean_seg, m1, out_c, delay=pipe_ai_only.algorithmic_delay_samples)
+            sin_c, sout_c, imp_c = compute_metrics(
+                clean_seg, m1, out_c, delay=pipe_ai_only.algorithmic_delay_samples
+            )
 
             # D. Corrected Streaming AI + NLMS
             out_d = run_streaming_pipeline(pipe_ai_nlms, m1, m2)
-            sin_d, sout_d, imp_d = compute_metrics(clean_seg, m1, out_d, delay=pipe_ai_nlms.algorithmic_delay_samples)
+            sin_d, sout_d, imp_d = compute_metrics(
+                clean_seg, m1, out_d, delay=pipe_ai_nlms.algorithmic_delay_samples
+            )
 
             # E. Corrected Full Production
             out_e = run_streaming_pipeline(pipe_prod, m1, m2)
-            sin_e, sout_e, imp_e = compute_metrics(clean_seg, m1, out_e, delay=pipe_prod.algorithmic_delay_samples)
+            sin_e, sout_e, imp_e = compute_metrics(
+                clean_seg, m1, out_e, delay=pipe_prod.algorithmic_delay_samples
+            )
 
             # F. Oracle AI-Only
             out_f = run_streaming_pipeline(pipe_oracle_ai, m1, m2, clean=clean_seg)
-            sin_f, sout_f, imp_f = compute_metrics(clean_seg, m1, out_f, delay=pipe_oracle_ai.algorithmic_delay_samples)
+            sin_f, sout_f, imp_f = compute_metrics(
+                clean_seg, m1, out_f, delay=pipe_oracle_ai.algorithmic_delay_samples
+            )
 
             # G. Oracle Full Production
             out_g = run_streaming_pipeline(pipe_oracle_prod, m1, m2, clean=clean_seg)
-            sin_g, sout_g, imp_g = compute_metrics(clean_seg, m1, out_g, delay=pipe_oracle_prod.algorithmic_delay_samples)
+            sin_g, sout_g, imp_g = compute_metrics(
+                clean_seg, m1, out_g, delay=pipe_oracle_prod.algorithmic_delay_samples
+            )
 
             # Oracle Ablations
-            out_o_no_floor = run_streaming_pipeline(pipe_oracle_no_floor, m1, m2, clean=clean_seg)
-            _, _, imp_o_no_floor = compute_metrics(clean_seg, m1, out_o_no_floor, delay=pipe_oracle_no_floor.algorithmic_delay_samples)
+            out_o_no_floor = run_streaming_pipeline(
+                pipe_oracle_no_floor, m1, m2, clean=clean_seg
+            )
+            _, _, imp_o_no_floor = compute_metrics(
+                clean_seg,
+                m1,
+                out_o_no_floor,
+                delay=pipe_oracle_no_floor.algorithmic_delay_samples,
+            )
 
-            out_o_no_nlms = run_streaming_pipeline(pipe_oracle_no_nlms, m1, m2, clean=clean_seg)
-            _, _, imp_o_no_nlms = compute_metrics(clean_seg, m1, out_o_no_nlms, delay=pipe_oracle_no_nlms.algorithmic_delay_samples)
+            out_o_no_nlms = run_streaming_pipeline(
+                pipe_oracle_no_nlms, m1, m2, clean=clean_seg
+            )
+            _, _, imp_o_no_nlms = compute_metrics(
+                clean_seg,
+                m1,
+                out_o_no_nlms,
+                delay=pipe_oracle_no_nlms.algorithmic_delay_samples,
+            )
 
-            out_o_no_fusion = run_streaming_pipeline(pipe_oracle_no_fusion, m1, m2, clean=clean_seg)
-            _, _, imp_o_no_fusion = compute_metrics(clean_seg, m1, out_o_no_fusion, delay=pipe_oracle_no_fusion.algorithmic_delay_samples)
+            out_o_no_fusion = run_streaming_pipeline(
+                pipe_oracle_no_fusion, m1, m2, clean=clean_seg
+            )
+            _, _, imp_o_no_fusion = compute_metrics(
+                clean_seg,
+                m1,
+                out_o_no_fusion,
+                delay=pipe_oracle_no_fusion.algorithmic_delay_samples,
+            )
 
             case_data = {
                 "noise_type": ntype,
                 "target_snr_db": snr_target,
+                "seed": case_seed,
                 "actual_input_snr_db": round(sin_c, 2),
                 "A_orig_offline": round(imp_a, 2),
                 "B_orig_streaming": round(imp_b, 2),
@@ -298,18 +442,52 @@ def run_all_benchmarks(checkpoint_path: Path | None = None) -> Dict[str, Any]:
                 "class_switches": pipe_prod.diagnostics["class_switch_count"],
             }
             results.append(case_data)
+            case_index += 1
 
-    return {"cases": results}
+    return {
+        "benchmark": "synthetic_12_case",
+        "checkpoint": str(ckpt_path.resolve()),
+        "checkpoint_sha256": _sha256_file(ckpt_path),
+        "seed": seed,
+        "source_paths": {
+            "clean": CLEAN_SPEECH_FILE.relative_to(PROJECT_ROOT).as_posix(),
+            **{
+                name: path.relative_to(PROJECT_ROOT).as_posix()
+                for name, path in NOISE_FILES.items()
+            },
+        },
+        "source_sha256": source_hashes,
+        "cases": results,
+    }
 
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="12-Case Benchmark Suite")
-    parser.add_argument("--checkpoint", type=str, default=str(CHECKPOINT_PATH), help="Path to checkpoint")
-    parser.add_argument("--output", type=str, default=str(PROJECT_ROOT / "evaluation" / "benchmark_12cases_results.json"), help="Output JSON path")
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        default=str(CHECKPOINT_PATH),
+        help="Path to checkpoint",
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=str(PROJECT_ROOT / "evaluation" / "benchmark_12cases_results.json"),
+        help="Output JSON path",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=DEFAULT_BENCHMARK_SEED,
+        help="Deterministic benchmark seed",
+    )
     args = parser.parse_args()
 
-    benchmark_data = run_all_benchmarks(checkpoint_path=Path(args.checkpoint))
+    benchmark_data = run_all_benchmarks(
+        checkpoint_path=Path(args.checkpoint), seed=args.seed
+    )
     out_file = Path(args.output)
     out_file.parent.mkdir(parents=True, exist_ok=True)
     with open(out_file, "w") as f:

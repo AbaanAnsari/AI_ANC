@@ -9,6 +9,7 @@ Usage (controlled 2-epoch run):
 Usage (full 30-epoch run):
     python src/training/train.py --epochs 30
 """
+
 from __future__ import annotations
 
 import argparse
@@ -55,6 +56,7 @@ logger = logging.getLogger("train")
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main(epochs: int = 2, checkpoint_dir: str = "models/checkpoints") -> None:
     """
@@ -158,7 +160,15 @@ def main(epochs: int = 2, checkpoint_dir: str = "models/checkpoints") -> None:
             "Epoch %2d | train_loss=%.6f  enh=%.6f  cls=%.6f "
             "| val_loss=%.6f  enh=%.6f  cls=%.6f "
             "| lr=%.2e | %.1fs",
-            epoch, tl, te, tc, vl, ve, vc, lr, dur,
+            epoch,
+            tl,
+            te,
+            tc,
+            vl,
+            ve,
+            vc,
+            lr,
+            dur,
         )
 
         # NaN/Inf check
@@ -184,8 +194,10 @@ def main(epochs: int = 2, checkpoint_dir: str = "models/checkpoints") -> None:
     if best_ckpt.exists():
         ckpt = Trainer_static_load(best_ckpt)
         verify_model = LightweightCNNTGRUModel()
-        verify_model.load_state_dict(ckpt["model_state_dict"])
-        loaded_params = sum(p.numel() for p in verify_model.parameters() if p.requires_grad)
+        verify_model.load_state_dict(ckpt["model_state_dict"], strict=True)
+        loaded_params = sum(
+            p.numel() for p in verify_model.parameters() if p.requires_grad
+        )
         logger.info("Checkpoint model param count: %d", loaded_params)
         assert loaded_params == 70_789
         assert "optimizer_state_dict" in ckpt
@@ -194,7 +206,8 @@ def main(epochs: int = 2, checkpoint_dir: str = "models/checkpoints") -> None:
         stored_best_loss = ckpt["best_val_loss"]
         logger.info(
             "Checkpoint epoch: %d | stored best_val_loss: %.6f",
-            stored_epoch, stored_best_loss,
+            stored_epoch,
+            stored_best_loss,
         )
         assert stored_epoch >= 1
         assert stored_best_loss < float("inf")
@@ -204,18 +217,23 @@ def main(epochs: int = 2, checkpoint_dir: str = "models/checkpoints") -> None:
 def Trainer_static_load(filepath):
     """Load checkpoint dict without instantiating Trainer."""
     import torch
+
     return torch.load(filepath, map_location="cpu", weights_only=False)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Phase 1 Training Run")
     parser.add_argument(
-        "--epochs", type=int, default=2,
-        help="Number of training epochs (default: 2 for controlled run)"
+        "--epochs",
+        type=int,
+        default=2,
+        help="Number of training epochs (default: 2 for controlled run)",
     )
     parser.add_argument(
-        "--checkpoint-dir", type=str, default="models/checkpoints",
-        help="Directory to save checkpoints"
+        "--checkpoint-dir",
+        type=str,
+        default="models/checkpoints",
+        help="Directory to save checkpoints",
     )
     args = parser.parse_args()
     main(epochs=args.epochs, checkpoint_dir=args.checkpoint_dir)

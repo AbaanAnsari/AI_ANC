@@ -1,6 +1,6 @@
 # Phase 0 dataset configuration
 dataset:
-  raw_root: "D:/SIH/AI_ANC/data"
+  raw_root: "data/raw/dataset"
   expected_audio_extension: ".wav"
   clean_dir: "clean"
   noise_dir: "noise"

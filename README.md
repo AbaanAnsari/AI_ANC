@@ -2,19 +2,7 @@
 
 **Project ID:** AETHEL123  
 **Development Strategy:** Synthetic simulation and desktop streaming → physical audio validation → possible embedded evaluation
-**Datasets Used : **https://drive.google.com/drive/folders/1N_ESWazKKdAHiLEqXl2pixvcl4H9nI60?usp=drive_link
-
-## Current Status (2026-09-30)
-
-The implemented enhancement model is `LightweightCNNGRUMaskModel` with 70,789 trainable parameters. The active Phase 3 experiment is `experiments/phase3_100ep/best_checkpoint.pt` (best validation epoch 68). A fresh seed-controlled synthetic benchmark records +6.76 dB AI-only and +5.63 dB full-production mean delta SNR across 12 cases. Offline/streaming correlation is 0.999479. A fresh 500-hop CPU software benchmark recorded mean 2.709 ms/hop, p95 3.668 ms, p99 5.073 ms, max 5.543 ms, RTF 0.3386, and RSS 269.43 MB. These are synthetic/software results, not physical ANC results.
-
-The Phase 3 v2 manifests currently fail the stronger identity/hash leakage audit with 612 findings, including 56 cross-split file-content overlaps; clean filenames also do not provide verifiable speaker IDs for a subset of records. Held-out scoring is therefore blocked. A prior stored held-out result reports +5.06 dB and 47.14% classification accuracy, but it is not valid evidence for a leakage-free test set and is rejected by the dashboard API because it lacks matching provenance. Do not describe these manifests as speaker-disjoint or leakage-free until they are repaired and the model is re-evaluated. The historical checkpoints and reported scores have not been rewritten.
-
-Physical microphone coupling, room acoustics, real ADC/DAC latency, and STM32H753ZI operation have not been validated. The algorithmic lookahead/WOLA delay is 768 samples (48 ms at 16 kHz); it is not total hardware or end-to-end system latency. See [Known Limitations](#known-limitations) before interpreting benchmark results.
-
-The design sections below describe the intended architecture and workflow. Where they conflict with this current-status section, the measured implementation status above takes precedence.
-
----
+**Datasets Used : https://drive.google.com/drive/folders/1N_ESWazKKdAHiLEqXl2pixvcl4H9nI60?usp=drive_link
 
 ## 1. Project Goal
 
